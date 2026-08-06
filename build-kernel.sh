@@ -524,7 +524,7 @@ resolve_fragment_dir() {
     local branch=$KERNEL_BRANCH suffix frag_dir
     if [ -z "$branch" ]; then
         branch=$(git -C "$WORK_DIR/$KERNEL_DIR" branch --show-current 2>/dev/null || true)
-        [ -n "$branch" ] && info "KERNEL_BRANCH empty; resolved from clone: $branch"
+        [ -n "$branch" ] && info "KERNEL_BRANCH empty; resolved from clone: $branch" >&2
     fi
     if [ -n "$branch" ] && [ "${branch#android12-5.10-}" != "$branch" ]; then
         suffix=${branch#android12-5.10-}
