@@ -517,9 +517,11 @@ EOF
 # the branch actually checked out by the clone (fetch_kernel clones the repo's
 # default branch when none is given), so the fragment set follows the real
 # branch instead of silently building the stock defconfig. A branch with no
-# matching set (or not an android12-5.10- build at all) yields no fragments
-# and the kernel builds against the stock committed defconfig. An explicit
-# DEFCONFIG_FRAGMENT is always honored as-is.
+# matching set (or not an android12-5.10- build at all) falls back to the
+# shared default set $SCRIPT_DIR/build/fragments/default/ (modskip, metamodule,
+# zram). A branch that resolves to neither yields no fragments and the kernel
+# builds against the stock committed defconfig. An explicit DEFCONFIG_FRAGMENT
+# is always honored as-is.
 resolve_fragment_dir() {
     local branch=$KERNEL_BRANCH suffix frag_dir
     if [ -z "$branch" ]; then
@@ -531,9 +533,14 @@ resolve_fragment_dir() {
         frag_dir=$SCRIPT_DIR/build/fragments/$suffix
         if [ -d "$frag_dir" ]; then
             printf '%s\n' "$frag_dir"
-        else
-            warn "no CloudFox fragment set for branch '$branch'; building with stock defconfig"
+            return 0
         fi
+    fi
+    if [ -d "$SCRIPT_DIR/build/fragments/default" ]; then
+        [ -n "$branch" ] && warn "no CloudFox fragment set for branch '$branch'; falling back to default fragments"
+        printf '%s\n' "$SCRIPT_DIR/build/fragments/default"
+    else
+        [ -n "$branch" ] && warn "no CloudFox fragment set for branch '$branch'; building with stock defconfig"
     fi
 }
 
