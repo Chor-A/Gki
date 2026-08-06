@@ -1,0 +1,215 @@
+name: publish-prebuilts
+"on":
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Re-fetch and re-upload every asset even if already released
+        type: boolean
+        required: false
+        default: false
+      release_tag:
+        description: Release tag for the prebuilt components (kept separate from kernel release tags)
+        required: false
+        default: prebuilts
+      clang_version:
+        description: Clang toolchain version
+        required: false
+        type: choice
+        options:
+          - clang 19
+          - clang 14
+        default: "clang 19"
+
+permissions:
+  contents: write
+
+jobs:
+  prebuilts:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      FORCE: ${{ inputs.force && '1' || '0' }}
+      KBT_ASSET: kernel-build-tools.tar.zst
+      BUILDTOOLS_ASSET: build-tools.tar.zst
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve clang profile
+        run: |
+          set -euo pipefail
+          case "${{ inputs.clang_version }}" in
+            "clang 14")
+              clang_branch=android14-dev
+              clang_version=clang-r450784e
+              ;;
+            "clang 19")
+              clang_branch=master
+              clang_version=clang-r536225
+              ;;
+            *)
+              echo "unknown clang version: ${{ inputs.clang_version }}" >&2
+              exit 1
+              ;;
+          esac
+          echo "CLANG_BRANCH=$clang_branch" >> "$GITHUB_ENV"
+          echo "CLANG_VERSION=$clang_version" >> "$GITHUB_ENV"
+          echo "TOOLS_BRANCH=master" >> "$GITHUB_ENV"
+          echo "CLANG_DIR_NAME=clang-r416183b" >> "$GITHUB_ENV"
+          echo "CLANG_ASSET=$clang_version-linux-x86.tar.zst" >> "$GITHUB_ENV"
+          echo "resolved clang: branch=$clang_branch version=$clang_version asset=$clang_version-linux-x86.tar.zst"
+
+      - name: Already released?
+        id: released
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          names=$(gh release view "$RELEASE_TAG" --json assets -q '.assets[].name' 2>/dev/null || true)
+          echo "assets: $names"
+          for a in "$CLANG_ASSET" "$KBT_ASSET" "$BUILDTOOLS_ASSET"; do
+            if [ "$FORCE" = "1" ] || ! echo "$names" | grep -qx "$a"; then
+              echo "$a" >> /tmp/wanted
+            fi
+          done
+          echo "wanted: $(cat /tmp/wanted 2>/dev/null || echo none)"
+          if [ -s /tmp/wanted ]; then
+            echo "wanted=work pending" >> "$GITHUB_OUTPUT"
+          else
+            echo "wanted=nothing to do" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch prebuilts from Google ACK (parallel)
+        if: steps.released.outputs.wanted != 'nothing to do'
+        run: |
+          set -euo pipefail
+          # The three prebuilts clone from googlesource.com independently and
+          # are network-bound, so fetch them concurrently instead of one step
+          # at a time. Each skips when its asset is already released.
+          fetch_clang() {
+            if [ "$FORCE" != "1" ] && ! grep -qx "$CLANG_ASSET" /tmp/wanted; then
+              echo "clang already released, skipping"
+              return 0
+            fi
+            git clone -q --depth 1 --filter=blob:none --sparse \
+              -b "$CLANG_BRANCH" \
+              https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang-src \
+              || { rm -rf clang-src; git clone -q --depth 1 -b "$CLANG_BRANCH" \
+                   https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang-src; }
+            git -C clang-src sparse-checkout set "$CLANG_VERSION"
+            test -x "clang-src/$CLANG_VERSION/bin/clang"
+            if [ "$CLANG_DIR_NAME" != "$CLANG_VERSION" ]; then
+              mv "clang-src/$CLANG_VERSION" "clang-src/$CLANG_DIR_NAME"
+            fi
+            tar --exclude=.git -C clang-src -I 'zstd -T0' -cf "$CLANG_ASSET" "$CLANG_DIR_NAME"
+            ls -la "$CLANG_ASSET"
+          }
+          fetch_kbt() {
+            if [ "$FORCE" != "1" ] && ! grep -qx "$KBT_ASSET" /tmp/wanted; then
+              echo "kernel-build-tools already released, skipping"
+              return 0
+            fi
+            git clone -q --depth 1 --filter=blob:none --sparse \
+              -b "$TOOLS_BRANCH" \
+              https://android.googlesource.com/kernel/prebuilts/build-tools kbt \
+              && git -C kbt sparse-checkout set linux-x86 \
+              || { rm -rf kbt; git clone -q --depth 1 -b "$TOOLS_BRANCH" \
+                   https://android.googlesource.com/kernel/prebuilts/build-tools kbt; }
+            test -x kbt/linux-x86/bin/dtc
+            tar --exclude=.git -C kbt -I 'zstd -T0' -cf "$KBT_ASSET" .
+            ls -la "$KBT_ASSET"
+          }
+          fetch_buildtools() {
+            if [ "$FORCE" != "1" ] && ! grep -qx "$BUILDTOOLS_ASSET" /tmp/wanted; then
+              echo "build-tools already released, skipping"
+              return 0
+            fi
+            git clone -q --depth 1 --filter=blob:none --sparse \
+              -b "$TOOLS_BRANCH" \
+              https://android.googlesource.com/platform/prebuilts/build-tools build-tools-src \
+              && git -C build-tools-src sparse-checkout set linux-x86 path/linux-x86 common/bison \
+              || { rm -rf build-tools-src; git clone -q --depth 1 -b "$TOOLS_BRANCH" \
+                   https://android.googlesource.com/platform/prebuilts/build-tools build-tools-src; }
+            test -x build-tools-src/linux-x86/bin/make
+            test -x build-tools-src/path/linux-x86/python3
+            tar --exclude=.git -C build-tools-src -I 'zstd -T0' -cf "$BUILDTOOLS_ASSET" .
+            ls -la "$BUILDTOOLS_ASSET"
+          }
+          pids=()
+          fetch_clang & pids+=("$!")
+          fetch_kbt & pids+=("$!")
+          fetch_buildtools & pids+=("$!")
+          rc=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || rc=1
+          done
+          [ "$rc" -eq 0 ] || exit 1
+
+      - name: Publish release (uploads only on-disk assets)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The fetch step only materializes *.tar.zst files for assets that
+          # are missing from the release, so the on-disk set IS the set to
+          # upload: no second release-asset query needed.
+          assets=()
+          for f in *.tar.zst; do
+            [ -f "$f" ] && assets+=("$f")
+          done
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "no assets to upload"
+            exit 0
+          fi
+          # Ensure the release exists, tolerating the parallel kernelsu job
+          # creating it concurrently (both jobs run on the same dispatch).
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --latest=false \
+              --title "Kernel build prebuilts" \
+              --notes "Prebuilt components consumed by build-kernel.sh, fetched from the Google ACK sources (clang, kernel-build-tools and build-tools; clang version configurable via workflow dropdown, default clang 19, bundled under a legacy directory name so pinned build scripts resolve it). The Google build scripts and gcc host sysroot are shipped in the repository itself." \
+              "${assets[@]}" >/dev/null 2>&1 || true
+          fi
+          gh release upload "$RELEASE_TAG" --clobber "${assets[@]}"
+          echo "release $RELEASE_TAG updated"
+
+  kernelsu:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      FORCE: ${{ inputs.force && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Mirror ksud binaries from upstream Actions run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$FORCE" != "1" ]; then
+            existing=$(gh release view "$RELEASE_TAG" --json assets -q '.assets[].name' 2>/dev/null || true)
+            needed="ksu-ksud-aarch64-linux-android.zip ksu-ksud-armv7-linux-androideabi.zip"
+            if [ -n "$existing" ]; then
+              missing=$(for a in $needed; do printf '%s\n' "$existing" | grep -qx "$a" || echo "$a"; done)
+              if [ -z "$missing" ]; then
+                echo "ksud assets already released, skipping (set force to re-mirror)"
+                exit 0
+              fi
+              echo "missing ksud assets: $missing"
+            fi
+          fi
+          ./build/kernelsu-mirror.sh
+
+      - name: Publish ksu assets to prebuilts release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --latest=false \
+              --title "Kernel build prebuilts" \
+              --notes "Prebuilt components consumed by build-kernel.sh and the build-kernel workflow: clang toolchain, kernel-build-tools, build-tools and mirrored ksud binaries (arm64/armv7) that replace the kernel on device." || true
+          fi
+          assets=()
+          for f in ksu-assets/ksu-*.zip; do
+            [ -f "$f" ] && assets+=("$f")
+          done
+          [ "${#assets[@]}" -gt 0 ] || { echo "no new ksu assets, nothing to upload"; exit 0; }
+          gh release upload "$RELEASE_TAG" --clobber "${assets[@]}"
+          echo "uploaded ${#assets[@]} ksu assets to $RELEASE_TAG"
