@@ -10,6 +10,7 @@ esac
 CLEAN=${CLEAN:-0}
 SKIP_FETCH=${SKIP_FETCH:-0}
 SKIP_BUILD=${SKIP_BUILD:-0}
+CCACHE_OPT=${CCACHE_OPT:-}
 WORK_DIR=${WORK_DIR:-"$SCRIPT_DIR/work"}
 KERNEL_DIR=${KERNEL_DIR:-common}
 KERNEL_REPO=${KERNEL_REPO:-https://github.com/CloudFox-INC/CloudFox-Kernel}
@@ -50,6 +51,13 @@ config_get() { # <file> <KEY>
     local key=$2
     grep -m1 -E "^(export[[:space:]]+)?$key=" "$1" 2>/dev/null | cut -d= -f2- | xargs || true
 }
+# curl for downloads, bounded only on the connect phase. A dead/hanging network
+# endpoint otherwise stalls on the host TCP connect timeout (~130s on Linux),
+# then retries - 3 times - stalling a many-gigabyte fetch (and the whole build
+# pipeline, since run_build waits on it) for many minutes. Sticking only a
+# connect timeout on never bounds a slow-but-alive transfer, so multi-GB
+# clang/build-tools tarballs still download at full speed.
+curl_dl() { curl --connect-timeout 10 "$@"; }
 
 usage() {
     cat <<EOF
@@ -157,6 +165,7 @@ while [[ $# -gt 0 ]]; do
         --defconfig-fragment) DEFCONFIG_FRAGMENT=$2; shift 2 ;;
         --defconfig-fragment-exclude) DEFCONFIG_FRAGMENT_EXCLUDE=${DEFCONFIG_FRAGMENT_EXCLUDE:+$DEFCONFIG_FRAGMENT_EXCLUDE }$2; shift 2 ;;
         --clean)         CLEAN=1; shift ;;
+        --ccache)        CCACHE_OPT=1; shift ;;
         --skip-fetch)    SKIP_FETCH=1; shift ;;
         --skip-build)    SKIP_BUILD=1; shift ;;
         -h|--help)       usage 0 ;;
@@ -181,15 +190,15 @@ API_BASE=https://api.github.com/repos/$REPO_PATH
 
 download_asset() {
     local asset=$1 out=$2 fallback=${3:-} api_url
-    if [ -z "${GITHUB_TOKEN:-}" ]; then
-        curl -fL --retry 3 -sS -o "$out" "$RELEASE_BASE/$asset" && return 0
-        [ -n "$fallback" ] && curl -fL --retry 3 -sS -o "$out" "$fallback" && return 0
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+        curl_dl -fL --retry 3 -sS -o "$out" "$RELEASE_BASE/$asset" && return 0
+        [ -n "$fallback" ] && curl_dl -fL --retry 3 -sS -o "$out" "$fallback" && return 0
         return 1
     fi
-    if curl -fL --retry 3 -sS -o "$out" "$RELEASE_BASE/$asset" 2>/dev/null; then
+    if curl_dl -fL --retry 3 -sS -o "$out" "$RELEASE_BASE/$asset" 2>/dev/null; then
         return 0
     fi
-    api_url=$(curl -sfL -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
+    api_url=$(curl_dl -sfL -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
         "$API_BASE/releases/tags/$PREBUILTS_TAG" 2>/dev/null | python3 -c "
 import json,sys
 try:
@@ -199,12 +208,12 @@ try:
 except Exception:
     pass
 " "$asset" 2>/dev/null || true)
-    if [ -n "$api_url" ] && curl -fL --retry 3 -sS \
+    if [ -n "$api_url" ] && curl_dl -fL --retry 3 -sS \
         -H "Authorization: Bearer ${GITHUB_TOKEN:-}" -H "Accept: application/octet-stream" \
         -o "$out" "$api_url"; then
         return 0
     fi
-    [ -n "$fallback" ] && curl -fL --retry 3 -sS -o "$out" "$fallback" && return 0
+    [ -n "$fallback" ] && curl_dl -fL --retry 3 -sS -o "$out" "$fallback" && return 0
     return 1
 }
 
@@ -291,7 +300,7 @@ fetch_clang_download() {
     [ -s "$tarball" ] && return 0
     mkdir -p "$WORK_DIR/downloads"
     if [ -n "$CLANG_URL" ]; then
-        curl -fL --retry 3 -sS -o "$tarball.part" "$CLANG_URL" || { rm -f "$tarball.part"; return 1; }
+        curl_dl -fL --retry 3 -sS -o "$tarball.part" "$CLANG_URL" || { rm -f "$tarball.part"; return 1; }
     else
         download_asset "$CLANG_ASSET" "$tarball.part" || { rm -f "$tarball.part"; return 1; }
     fi
@@ -340,7 +349,7 @@ fetch_clang() {
         if [ -s "$tarball" ]; then
             tar -I 'zstd -T0' -xf "$tarball" -C "$root"
         elif [ -n "$CLANG_URL" ]; then
-            curl -fL --retry 3 -o "$tarball" "$CLANG_URL" || die "failed to download clang from $CLANG_URL"
+            curl_dl -fL --retry 3 -o "$tarball" "$CLANG_URL" || die "failed to download clang from $CLANG_URL"
             tar -I 'zstd -T0' -xf "$tarball" -C "$root"
         elif ! download_asset "$CLANG_ASSET" "$tarball"; then
             warn "no prebuilt clang bundle, sparse-cloning $CLANG_UPSTREAM_REPO"
@@ -364,9 +373,114 @@ fetch_clang() {
     fi
 }
 
+fetch_ccache() {
+    # Install the prebuilt ccache binary. Runs inside the parallel fetch pool
+    # so it overlaps the heavy prebuilt downloads instead of serializing as a
+    # separate workflow step. Nothing here is fatal: install_ccache_wrappers
+    # no-ops (and the build proceeds un-cached) if ccache is unavailable.
+    command -v ccache >/dev/null 2>&1 && return 0
+    local arch
+    arch=$(uname -m)
+    [ "$arch" = "x86_64" ] || { warn "ccache: unsupported arch '$arch'; skipping"; return 0; }
+    local ver=4.13.6
+    local tmp="$WORK_DIR/downloads/ccache.tar.xz"
+    mkdir -p "$WORK_DIR/downloads"
+    curl_dl -fL --retry 3 -sS -o "$tmp" \
+        "https://github.com/ccache/ccache/releases/download/v${ver}/ccache-${ver}-linux-x86_64-glibc.tar.xz" \
+        || { warn "ccache: download failed; building without ccache"; return 0; }
+    local tree
+    tree=$(mktemp -d)
+    tar -xJf "$tmp" -C "$tree" --strip-components=1 \
+        && sudo install -m 0755 "$tree/ccache" /usr/local/bin/ccache
+    rm -rf "$tree"
+    command -v ccache >/dev/null 2>&1 || warn "ccache: install incomplete; building without ccache"
+}
+
+install_ccache_wrappers() {
+    # ccache-accelerate the kernel compile. build.sh sets LLVM=1 (forcing
+    # "CC=clang" in its LLVM branch) and prepends CLANG_PREBUILT_BIN to PATH, so
+    # neither a CC="ccache clang" make arg nor ccache PATH symlinks survive.
+    # The one injection point that does is the compiler binary itself. In
+    # Android clang builds the real compilers live as "bin/<tool>.real" invoked
+    # by a Go compiler-wrapper "bin/<tool>"; relocating those wrappers breaks
+    # their sibling-.real lookup, so we wrap the ".real" file in place instead
+    # (falling back to wrapping "bin/<tool>" directly for plain single binaries).
+    # Every compiler invocation funnels through ccache, and it is fully
+    # reversible: the real binaries are preserved and restored on exit, so a
+    # ccache failure cannot poison the toolchain.
+    [ -n "${CCACHE_OPT:-}" ] || return 0
+    [ -n "${CCACHE_WRAPPED:-}" ] && return 0   # already wrapped (idempotent)
+    local ccache_bin
+    ccache_bin=$(command -v ccache) || { warn "ccache requested but not installed; skipping wrap"; CCACHE_OPT=; return 0; }
+    local clang_dir
+    clang_dir=$(resolve_clang_dir || true)
+    if [ -z "$clang_dir" ] || [ ! -x "$clang_dir/bin/clang" ]; then
+        warn "ccache: no clang toolchain to wrap"; CCACHE_OPT=; return 0
+    fi
+    # build.sh runs with a hermetic PATH that excludes /usr/local/bin, so the
+    # launchers must call ccache by absolute path (bare "exec ccache" would 127).
+    "$ccache_bin" -o cache_dir="$WORK_DIR/.ccache" >/dev/null 2>&1 || true
+    mkdir -p "$WORK_DIR/.ccache" "$clang_dir/.cfx-orig-bin"
+    local tool target orig realbin
+    for tool in clang clang++ ${CCACHE_LINK_TOOLS:-aarch64-linux-gnu-clang aarch64-linux-gnu-clang++}; do
+        target="$clang_dir/bin/$tool"
+        [ -x "$target.real" ] && target="$target.real"   # Go-wrapper toolchain
+        [ -e "$target" ] || [ -L "$target" ] || continue
+        # If the real compiler is a symlink, resolve its absolute target NOW
+        # (relocating the symlink would dangle it); feed ccache the resolved
+        # genuine binary. For a plain file we feed the relocated copy instead.
+        realbin=
+        [ -L "$target" ] && realbin=$(readlink -f -- "$target" 2>/dev/null)
+        orig="$clang_dir/.cfx-orig-bin/$(basename -- "$target")"
+        if [ ! -e "$orig" ] && [ ! -L "$orig" ]; then
+            mv -- "$target" "$orig"
+        fi
+        [ -n "$realbin" ] || realbin="$orig"
+        [ -x "$realbin" ] || continue
+        rm -f -- "$target"
+        cat > "$target" <<EOF
+#!/usr/bin/env bash
+exec "$ccache_bin" "$realbin" "\$@"
+EOF
+        chmod +x "$target"
+    done
+    # CCACHE_* sizing/tuning (mirrors the approach used by the OnePlus KSU kernel
+    # workflow). The critical ones for kernel reuse: IGNOREOPTIONS drops the
+    # Android --sysroot=<build-tree path> (which changes per run and would bust
+    # every hit), DIRECT+DEPEND skip preprocessor re-runs, and COMPRESSION makes
+    # the on-disk cache smaller/faster to upload+restore across CI runs.
+    export CCACHE_COMPILERCHECK=content
+    export CCACHE_NOHASHDIR=true
+    export CCACHE_BASEDIR="$WORK_DIR"
+    export CCACHE_SLOPPINESS=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,system_headers,locale
+    export CCACHE_IGNOREOPTIONS=--sysroot*
+    export CCACHE_DIRECT=true
+    export CCACHE_COMPRESSION=true
+    export CCACHE_COMPRESSION_LEVEL=1
+    export CCACHE_MAXSIZE=12G
+    export CCACHE_DIR="$WORK_DIR/.ccache"
+    # depend mode (4.1+) stores dependency data so unchanged files hit without a
+    # full re-preprocess; enable opportunistically.
+    if "$ccache_bin" --help 2>&1 | grep -qi 'depend'; then
+        export CCACHE_DEPEND=true
+    fi
+    CCACHE_WRAPPED=1
+    info "ccache wrappers installed on $(rel "$clang_dir") toolchain (CCACHE_DIR=$(rel "$CCACHE_DIR"))"
+}
+restore_ccache_wrappers() {
+    [ -n "${CCACHE_OPT:-}" ] || return 0
+    local clang_dir=$(resolve_clang_dir || true)
+    [ -z "$clang_dir" ] || [ ! -d "$clang_dir/.cfx-orig-bin" ] && return 0
+    local f
+    for f in "$clang_dir/.cfx-orig-bin/"*; do
+        [ -e "$f" ] || continue
+        mv -f -- "$f" "$clang_dir/bin/$(basename -- "$f")"
+    done
+    rm -rf "$clang_dir/.cfx-orig-bin"
+}
+
 # Populate a prebuilt tree at $dest: prefer an explicit URL tarball, then the
 # PREBUILTS_TAG release asset, then a shallow clone of the upstream repo.
-# Readiness/validation is the caller's job (they know what to look for).
 # Remaining args after <upstream_repo> are sparse-checkout paths (cone mode);
 # when given, the clone only fetches those subtrees instead of the whole
 # multi-GB repo (build-tools carries darwin-x86/windows payloads the kernel
@@ -392,7 +506,7 @@ fetch_prebuilt_tree() { # <dest> <tarball> <url> <asset> <upstream_repo> [sparse
             fi
         fi
     else
-        curl -fL --retry 3 -o "$tarball" "$url"
+        curl_dl -fL --retry 3 -o "$tarball" "$url"
         tar -I 'zstd -T0' -xf "$tarball" -C "$dest"
     fi
 }
@@ -786,6 +900,10 @@ main() {
             fetch_gcc_host & fetch_pids+=("$!")
         fi
         fetch_gas & fetch_pids+=("$!")
+        # ccache is just a small prebuilt binary; fetching it here overlaps the
+        # multi-GB prebuilts instead of serializing as a workflow step. Falls
+        # back gracefully (wrap then no-ops) if the download fails.
+        fetch_ccache & fetch_pids+=("$!")
         # The clang tarball download and its zstd extraction only read
         # CLANG_URL/release assets, never the kernel tree (fetch_clang's pin
         # symlink needs the kernel), so both overlap the clone instead of
@@ -810,6 +928,12 @@ main() {
     fi
     apply_defconfig_fragment
     if [ "$SKIP_BUILD" -eq 0 ]; then
+        # ccache binary is fetched in the parallel pool above and ccache itself
+        # comes on line only after the pool wait; wrap clang now that both are
+        # guaranteed. Also covers --skip-fetch (clang pre-dates this run).
+        # Always restore the toolchain binaries, even on build failure.
+        install_ccache_wrappers
+        trap restore_ccache_wrappers EXIT
         run_build
         collect
         info "done. kernel and artifacts: $(rel "$WORK_DIR/dist")"

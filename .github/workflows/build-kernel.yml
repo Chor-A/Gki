@@ -46,6 +46,10 @@ name: build-kernel
         description: 'Extra literal CONFIG_* lines injected into the defconfig (comma-separated, e.g. "CONFIG_KERNELSU=y,# CONFIG_X is not set")'
         required: false
         default: ""
+      ccache:
+        description: 'Accelerate with ccache. Branch-agnostic: objects shared across kernel branches/commits are reused from a cross-run cache; first run is cold, later runs (incl. different branches) get partial hits.'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -68,17 +72,30 @@ jobs:
       APPEND_BUILD_ENV: ${{ inputs.append_build_env }}
       APPEND_CONFIG: ${{ inputs.append_config }}
       RELEASE_TAG: ${{ inputs.release_tag }}
+      CCACHE_OPT: ${{ inputs.ccache && '1' || '' }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install host tools
-        run: sudo apt-get update && sudo apt-get install -y bison bc rsync
 
       - name: Free disk space
         run: |
           sudo bash build/free-disk-space.sh
           df -h
+
+      - name: Restore ccache cache
+        if: ${{ inputs.ccache }}
+        uses: actions/cache@v4
+        with:
+          path: work/.ccache
+          # Branch-agnostic: the primary key includes the branch, but
+          # restore-keys fall back to the clang/repo prefix so a *different*
+          # branch's run shares the same bucket. ccache hashes each object's
+          # content, so shared kernel source across branches still hits.
+          key: cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-${{ inputs.kernel_branch }}
+          restore-keys: |
+            cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-
+            cfx-ccache-${{ env.CLANG_ASSET }}-
+          fail-on-cache-miss: false
 
       - name: Add 24G swap
         run: |
@@ -102,13 +119,20 @@ jobs:
             ./build/kernelsu-fetch.sh &
             ksu_pid=$!
           fi
-          ./build-kernel.sh
+          ./build-kernel.sh ${{ inputs.ccache && '--ccache' || '' }}
           if [ -n "$ksu_pid" ]; then
             # A ksud mirror hiccup must not discard the finished ~180 minute
             # kernel build; record the failure and let the pack step skip the
             # flashable zip while the kernel release still publishes.
             wait "$ksu_pid" || echo "::warning::ksud fetch failed; flashable zip will be skipped"
           fi
+
+      - name: Save ccache cache
+        if: ${{ inputs.ccache && always() }}
+        uses: actions/cache/save@v4
+        with:
+          path: work/.ccache
+          key: cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-${{ inputs.kernel_branch }}
 
       - name: Pack flashable kernel zip
         if: ${{ inputs.pack_flashable }}

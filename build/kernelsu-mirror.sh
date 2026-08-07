@@ -24,6 +24,9 @@ GITHUB_TOKEN=${GITHUB_TOKEN:-}
 info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[ OK ]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[ERR]\033[0m %s\n' "$*" >&2; exit 1; }
+# Bound only the connect phase: a hanging endpoint otherwise stalls on the host
+# TCP connect timeout (~130s) x --retry 3 between GitHub API calls.
+curl_dl() { curl --connect-timeout 10 "$@"; }
 
 [ -n "$GITHUB_TOKEN" ] || die "GITHUB_TOKEN is required (GitHub denies unauthenticated artifact downloads)"
 
@@ -44,7 +47,7 @@ want() {
 mkdir -p "$OUT_DIR"
 run_ids=()
 for page in 1 2 3 4 5; do
-    mapfile -t ids < <(curl -sfL "${AUTH[@]}" \
+    mapfile -t ids < <(curl_dl -sfL "${AUTH[@]}" \
         "$API/actions/runs?branch=$KSU_BRANCH&status=success&per_page=10&page=$page" | \
         python3 -c "import json,sys; print('\n'.join(str(r['id']) for r in json.load(sys.stdin).get('workflow_runs',[])))")
     # python print() emits a trailing newline even for an empty run list, so
@@ -64,7 +67,7 @@ for page in 1 2 3 4 5; do
     for run_id in "${page_ids[@]}"; do
         # Parse "name id" pairs in one call; the artifact ids needed for the
         # download URLs are already in this response, so no per-name re-query.
-        mapfile -t art < <(curl -sfL "${AUTH[@]}" \
+        mapfile -t art < <(curl_dl -sfL "${AUTH[@]}" \
             "$API/actions/runs/$run_id/artifacts?per_page=100" | \
             python3 -c "import json,sys; print('\n'.join(f\"{a['name']} {a['id']}\" for a in json.load(sys.stdin).get('artifacts',[])))")
         matched=()
@@ -87,7 +90,7 @@ for page in 1 2 3 4 5; do
             n=${matched[$i]}
             aid=${matched_ids[$i]}
             [ -n "$aid" ] || die "artifact '$n' not found in run $run_id"
-            ( curl -fL --retry 3 -sS -o "$OUT_DIR/ksu-$n.zip" \
+            ( curl_dl -fL --retry 3 -sS -o "$OUT_DIR/ksu-$n.zip" \
                 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
                 "$API/actions/artifacts/$aid/zip" &&
                 ok "ksu-$n.zip" ) & dl_pids+=("$!")

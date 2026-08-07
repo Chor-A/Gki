@@ -43,6 +43,9 @@ KMI=${KMI:-android12-5.10}
 info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[ OK ]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[ERR]\033[0m %s\n' "$*" >&2; exit 1; }
+# Bound only the connect phase: slows/dies on a hanging endpoint instead of the
+# host TCP connect timeout (~130s) x --retry 3; alive-but-slow stays uncapped.
+curl_dl() { curl --connect-timeout 10 "$@"; }
 
 usage() {
     cat <<EOF
@@ -83,7 +86,7 @@ fetch_ksud() {
     if [ -n "$dest" ] && [ -f "$dest" ]; then return 0; fi
     if [ -z "$KSUD_BASE" ]; then die "no $target ksud (set KSUD_$([ "$target" = aarch64-linux-android ] && echo ARM64 || echo ARMV7) or KSUD_BASE)"; fi
     info "fetching ksu-ksud-$target.zip from the prebuilt release"
-    if ! curl -fsSL --retry 3 -o "$stage/ksud-$target.zip" \
+    if ! curl_dl -fsSL --retry 3 -o "$stage/ksud-$target.zip" \
         "$KSUD_BASE/ksu-ksud-$target.zip"; then
         die "failed to fetch ksu-ksud-$target.zip from $KSUD_BASE"
     fi

@@ -27,6 +27,10 @@ GITHUB_TOKEN=${GITHUB_TOKEN:-}
 
 ok()   { printf '\033[1;32m[ OK ]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[ERR]\033[0m %s\n' "$*" >&2; exit 1; }
+# Bound only the connect phase: a hanging endpoint otherwise stalls the pipeline
+# on the host TCP connect timeout (~130s) times --retry 3; transfers that are
+# alive-but-slow are never capped.
+curl_dl() { curl --connect-timeout 10 "$@"; }
 
 usage() {
     cat <<EOF
@@ -67,7 +71,7 @@ download_zip() {
     local zip=$1 prebuilt=$2 artifact=$3 aid
 
     if [ -n "$KSU_PREBUILT_BASE" ]; then
-        if curl -fL --retry 3 -sS -o "$zip" "$KSU_PREBUILT_BASE/ksu-$prebuilt.zip" 2>/dev/null; then
+        if curl_dl -fL --retry 3 -sS -o "$zip" "$KSU_PREBUILT_BASE/ksu-$prebuilt.zip" 2>/dev/null; then
             ok "ksu-$prebuilt.zip from prebuilts release"
             return 0
         fi
@@ -77,10 +81,10 @@ download_zip() {
             path=${KSU_PREBUILT_BASE#https://github.com/}
             repo_path=${path%%/releases/*}
             tag=${path##*/}
-            url=$(curl -sfL -H "Authorization: Bearer $GITHUB_TOKEN" \
+            url=$(curl_dl -sfL -H "Authorization: Bearer $GITHUB_TOKEN" \
                 "https://api.github.com/repos/$repo_path/releases/tags/$tag" 2>/dev/null | \
                 python3 -c "import json,sys; d=json.load(sys.stdin); a=[x for x in d.get('assets',[]) if x['name']==sys.argv[1]]; print(a[0]['url'] if a else '')" "ksu-$prebuilt.zip" 2>/dev/null || true)
-            if [ -n "$url" ] && curl -fL --retry 3 -sS -o "$zip" \
+            if [ -n "$url" ] && curl_dl -fL --retry 3 -sS -o "$zip" \
                 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/octet-stream" \
                 "$url" 2>/dev/null; then
                 ok "ksu-$prebuilt.zip from prebuilts release (API)"
@@ -90,15 +94,15 @@ download_zip() {
     fi
 
     [ -n "$GITHUB_TOKEN" ] || die "no prebuilt asset ksu-$prebuilt.zip and no GITHUB_TOKEN for the actions-API fallback"
-    [ -n "${RUN_ID:-}" ] || RUN_ID=$(curl -sfL -H "Authorization: Bearer $GITHUB_TOKEN" \
+    [ -n "${RUN_ID:-}" ] || RUN_ID=$(curl_dl -sfL -H "Authorization: Bearer $GITHUB_TOKEN" \
         "$API/actions/runs?branch=$KSU_BRANCH&status=success&per_page=1" 2>/dev/null | \
         python3 -c "import json,sys; r=json.load(sys.stdin).get('workflow_runs',[]); print(r[0]['id'] if r else '')" || true)
     [ -n "$RUN_ID" ] || die "no successful $KSU_OWNER/$KSU_REPO run on $KSU_BRANCH"
-    aid=$(curl -sfL -H "Authorization: Bearer $GITHUB_TOKEN" \
+    aid=$(curl_dl -sfL -H "Authorization: Bearer $GITHUB_TOKEN" \
         "$API/actions/runs/$RUN_ID/artifacts?name=$artifact" | \
         python3 -c "import json,sys; a=json.load(sys.stdin).get('artifacts',[]); print(a[0]['id'] if a else '')" || true)
     [ -n "$aid" ] || die "artifact '$artifact' not found in run $RUN_ID"
-    curl -fL --retry 3 -sS -o "$zip" \
+    curl_dl -fL --retry 3 -sS -o "$zip" \
         -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
         "$API/actions/artifacts/$aid/zip"
     ok "$artifact artifact (run $RUN_ID)"
