@@ -38,6 +38,14 @@ name: build-kernel
         description: 'Defconfig fragments to exclude (space- or comma-separated names)'
         required: false
         default: ""
+      append_build_env:
+        description: 'Extra KEY=VALUE pairs appended to build.config.cloudfox (comma-separated, e.g. "TRIM_UNUSED_KSYMS=1,LOCALVERSION=-vanilla"; sourced by build.sh)'
+        required: false
+        default: ""
+      append_config:
+        description: 'Extra literal CONFIG_* lines injected into the defconfig (comma-separated, e.g. "CONFIG_KERNELSU=y,# CONFIG_X is not set")'
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -57,6 +65,8 @@ jobs:
       KERNEL_COMMIT: ${{ inputs.kernel_commit }}
       CLANG_ASSET: ${{ fromJSON('{"clang 14":"clang-r450784e-linux-x86.tar.zst","clang 19":"clang-r536225-linux-x86.tar.zst"}')[inputs.clang_version] }}
       DEFCONFIG_FRAGMENT_EXCLUDE: ${{ inputs.defconfig_fragment_exclude }}
+      APPEND_BUILD_ENV: ${{ inputs.append_build_env }}
+      APPEND_CONFIG: ${{ inputs.append_config }}
       RELEASE_TAG: ${{ inputs.release_tag }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:

@@ -33,6 +33,8 @@ JOBS=${JOBS:-}
 BUILD_CONFIG=${BUILD_CONFIG:-}
 DEFCONFIG_FRAGMENT=${DEFCONFIG_FRAGMENT:-}
 DEFCONFIG_FRAGMENT_EXCLUDE=${DEFCONFIG_FRAGMENT_EXCLUDE:-}
+APPEND_BUILD_ENV=${APPEND_BUILD_ENV:-}
+APPEND_CONFIG=${APPEND_CONFIG:-}
 
 info() { printf '\033[1;34m[INFO]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[ OK ]\033[0m %s\n' "$*"; }
@@ -509,6 +511,20 @@ export CLOUDFOX_HOST_CXX=${CLOUDFOX_HOST_CXX:-g++}
 EOF
         ok "custom-toolchain host-tool override appended"
     fi
+
+    # APPEND_BUILD_ENV: comma-separated "KEY=VALUE" pairs written as export
+    # lines so build.sh (which sources this config) sees them. Example:
+    # TRIM_UNUSED_KSYMS=1,LOCALVERSION="-vanilla"
+    if [ -n "$APPEND_BUILD_ENV" ]; then
+        local IFS=, pair
+        {
+            printf '\n# CloudFox addition: caller-appended build env (sourced by build.sh)\n'
+            for pair in $APPEND_BUILD_ENV; do
+                [ -n "$pair" ] && printf 'export %s\n' "$pair"
+            done
+        } >> "$WORK_DIR/build.config.cloudfox"
+        ok "caller build env appended"
+    fi
 }
 
 # Resolve the default defconfig-fragment directory from the kernel branch name.
@@ -595,6 +611,32 @@ apply_defconfig_fragment() {
     defconfig=${defconfig:-gki_defconfig}
     local file=$WORK_DIR/$KERNEL_DIR/arch/$arch/configs/$defconfig
     [ -f "$file" ] || die "defconfig not found: $file (defconfig fragment(s) not applied)"
+
+    # APPEND_CONFIG: comma-separated literal CONFIG_* lines injected into the
+    # defconfig on top of the resolved fragment set (e.g. CONFIG_KERNELSU=y).
+    # Collected into a temp file treated as one extra fragment so the lines go
+    # through the same per-symbol dedup and append machinery below.
+    if [ -n "$APPEND_CONFIG" ]; then
+        local lcf ap ifs_save
+        lcf=$(mktemp)
+        ifs_save=$IFS
+        IFS=,
+        for ap in $APPEND_CONFIG; do
+            [ -n "$ap" ] || continue
+            case "$ap" in
+                CONFIG_*=*|'# CONFIG_'*' is not set')
+                    printf '%s\n' "$ap" >> "$lcf" ;;
+                *)
+                    warn "append_config must be literal CONFIG_* lines; ignoring: $ap" ;;
+            esac
+        done
+        IFS=$ifs_save
+        if [ -s "$lcf" ]; then
+            frags="$frags $lcf"
+        else
+            rm -f "$lcf"
+        fi
+    fi
 
     local start='# begin-cloudfox-fragment' end='# end-cloudfox-fragment'
     local stripped block out sym val cand line frag bad
