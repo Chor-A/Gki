@@ -1,3 +1,6 @@
 work/
 *.tar.zst
 patch-tool/target/
+# generated ksud binaries mirrored to the prebuilts release
+ksu-assets/
+kernelsu/

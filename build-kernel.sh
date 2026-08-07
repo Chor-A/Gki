@@ -50,6 +50,13 @@ config_get() { # <file> <KEY>
     local key=$2
     grep -m1 -E "^(export[[:space:]]+)?$key=" "$1" 2>/dev/null | cut -d= -f2- | xargs || true
 }
+# curl for downloads, bounded only on the connect phase. A dead/hanging network
+# endpoint otherwise stalls on the host TCP connect timeout (~130s on Linux),
+# then retries - 3 times - stalling a many-gigabyte fetch (and the whole build
+# pipeline, since run_build waits on it) for many minutes. Sticking only a
+# connect timeout on never bounds a slow-but-alive transfer, so multi-GB
+# clang/build-tools tarballs still download at full speed.
+curl_dl() { curl --connect-timeout 10 "$@"; }
 
 usage() {
     cat <<EOF
@@ -181,15 +188,15 @@ API_BASE=https://api.github.com/repos/$REPO_PATH
 
 download_asset() {
     local asset=$1 out=$2 fallback=${3:-} api_url
-    if [ -z "${GITHUB_TOKEN:-}" ]; then
-        curl -fL --retry 3 -sS -o "$out" "$RELEASE_BASE/$asset" && return 0
-        [ -n "$fallback" ] && curl -fL --retry 3 -sS -o "$out" "$fallback" && return 0
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+        curl_dl -fL --retry 3 -sS -o "$out" "$RELEASE_BASE/$asset" && return 0
+        [ -n "$fallback" ] && curl_dl -fL --retry 3 -sS -o "$out" "$fallback" && return 0
         return 1
     fi
-    if curl -fL --retry 3 -sS -o "$out" "$RELEASE_BASE/$asset" 2>/dev/null; then
+    if curl_dl -fL --retry 3 -sS -o "$out" "$RELEASE_BASE/$asset" 2>/dev/null; then
         return 0
     fi
-    api_url=$(curl -sfL -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
+    api_url=$(curl_dl -sfL -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
         "$API_BASE/releases/tags/$PREBUILTS_TAG" 2>/dev/null | python3 -c "
 import json,sys
 try:
@@ -199,12 +206,12 @@ try:
 except Exception:
     pass
 " "$asset" 2>/dev/null || true)
-    if [ -n "$api_url" ] && curl -fL --retry 3 -sS \
+    if [ -n "$api_url" ] && curl_dl -fL --retry 3 -sS \
         -H "Authorization: Bearer ${GITHUB_TOKEN:-}" -H "Accept: application/octet-stream" \
         -o "$out" "$api_url"; then
         return 0
     fi
-    [ -n "$fallback" ] && curl -fL --retry 3 -sS -o "$out" "$fallback" && return 0
+    [ -n "$fallback" ] && curl_dl -fL --retry 3 -sS -o "$out" "$fallback" && return 0
     return 1
 }
 
@@ -291,7 +298,7 @@ fetch_clang_download() {
     [ -s "$tarball" ] && return 0
     mkdir -p "$WORK_DIR/downloads"
     if [ -n "$CLANG_URL" ]; then
-        curl -fL --retry 3 -sS -o "$tarball.part" "$CLANG_URL" || { rm -f "$tarball.part"; return 1; }
+        curl_dl -fL --retry 3 -sS -o "$tarball.part" "$CLANG_URL" || { rm -f "$tarball.part"; return 1; }
     else
         download_asset "$CLANG_ASSET" "$tarball.part" || { rm -f "$tarball.part"; return 1; }
     fi
@@ -340,7 +347,7 @@ fetch_clang() {
         if [ -s "$tarball" ]; then
             tar -I 'zstd -T0' -xf "$tarball" -C "$root"
         elif [ -n "$CLANG_URL" ]; then
-            curl -fL --retry 3 -o "$tarball" "$CLANG_URL" || die "failed to download clang from $CLANG_URL"
+            curl_dl -fL --retry 3 -o "$tarball" "$CLANG_URL" || die "failed to download clang from $CLANG_URL"
             tar -I 'zstd -T0' -xf "$tarball" -C "$root"
         elif ! download_asset "$CLANG_ASSET" "$tarball"; then
             warn "no prebuilt clang bundle, sparse-cloning $CLANG_UPSTREAM_REPO"
@@ -392,7 +399,7 @@ fetch_prebuilt_tree() { # <dest> <tarball> <url> <asset> <upstream_repo> [sparse
             fi
         fi
     else
-        curl -fL --retry 3 -o "$tarball" "$url"
+        curl_dl -fL --retry 3 -o "$tarball" "$url"
         tar -I 'zstd -T0' -xf "$tarball" -C "$dest"
     fi
 }
