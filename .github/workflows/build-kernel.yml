@@ -190,9 +190,9 @@ jobs:
           +			if ((p = strstr(buf, "buildvariant = \"userdebug\""))) memcpy(p + 16, "user     \"", 10);
           +			seq_puts(m, buf);
           +			kfree(buf);
-          +			return 0;
-          +		}
-          +		seq_write(m, saved_bootconfig, saved_bootconfig_size);
+          			return 0;
+          		}
+          		seq_write(m, saved_bootconfig, saved_bootconfig_size);
           	}
           	return 0;
           }
@@ -253,20 +253,9 @@ jobs:
           # Ensure Makefile compiles susfs.o
           grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
 
-          # 4. Integrate KernelSU-Next & Patch with SuSFS 0x555e1 Supercalls
-          echo "=== 4. Setting up KernelSU-Next & SuSFS KSU Hooks ==="
+          # 4. Integrate KernelSU-Next
+          echo "=== 4. Setting up KernelSU-Next ==="
           curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-
-          if [ -d "KernelSU-Next" ]; then
-            cd KernelSU-Next
-            patch -p1 -N < ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
-            cd ..
-          fi
-          if [ -d "drivers/kernelsu" ]; then
-            cd drivers/kernelsu
-            patch -p1 -N < ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
-            cd ../..
-          fi
 
           # 5. Method 3: Official Manual NoMount Dev Integration
           echo "=== 5. Executing Method 3: Manual NoMount Dev Integration ==="
