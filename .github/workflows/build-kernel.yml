@@ -108,7 +108,7 @@ jobs:
           git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} work/common
           cd work/common
           
-          # 1. Apply All 4 Files Spoof Patch (array.c + cmdline.c + bootconfig.c + kallsyms.c)
+          # 1. Apply Full Complete Spoof Patch (array.c + cmdline.c + bootconfig.c + kallsyms.c)
           cat << 'EOF' > full_complete_spoof.patch
           diff --git a/fs/proc/array.c b/fs/proc/array.c
           index f5da74234..8a91e931f 100644
@@ -215,15 +215,53 @@ jobs:
           EOF
           patch -p1 -N < full_complete_spoof.patch || echo "Patch applied or skipped"
 
-          # 2. Clean Templar's old Legacy NoMount files & Install Official NoMount Dev Netlink Driver
-          rm -f fs/nomount.c
-          rm -f fs/nomount.h
-          rm -rf fs/nomount
-          sed -i '/nomount/d' fs/Makefile
-          sed -i '/nomount/d' fs/Kconfig
-          curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash -s dev
+          # 2. Add Kernel-Level sys.oem_unlock_allowed Thread Driver
+          cat << 'EOF' > drivers/misc/oem_spoof.c
+          #include <linux/module.h>
+          #include <linux/kernel.h>
+          #include <linux/kthread.h>
+          #include <linux/delay.h>
+          #include <linux/kmod.h>
+          #include <linux/fs.h>
+          #include <linux/namei.h>
 
-          # 3. Integrate KernelSU-Next
+          static int oem_spoof_thread(void *data)
+          {
+          	struct path path;
+          	int ret;
+          	char *argv[] = { "/system/bin/setprop", "sys.oem_unlock_allowed", "1", NULL };
+          	static char *envp[] = { "HOME=/", "PATH=/sbin:/vendor/bin:/system/sbin:/system/bin:/system/xbin", NULL };
+
+          	while (!kthread_should_stop()) {
+          		ret = kern_path("/dev/socket/property_service", LOOKUP_FOLLOW, &path);
+          		if (ret == 0) {
+          			path_put(&path);
+          			msleep(3000);
+          			call_usermodehelper(argv[0], argv, envp, UMH_WAIT_EXEC);
+          			break;
+          		}
+          		msleep(1000);
+          	}
+          	return 0;
+          }
+
+          static int __init oem_spoof_init(void)
+          {
+          	kthread_run(oem_spoof_thread, NULL, "kspoof_oem");
+          	return 0;
+          }
+          late_initcall(oem_spoof_init);
+          MODULE_LICENSE("GPL");
+          EOF
+          echo "obj-y += oem_spoof.o" >> drivers/misc/Makefile
+
+          # 3. Setup NoMount Dev Netlink without deleting Templar's VFS hooks
+          rm -rf fs/nomount
+          curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash -s dev
+          # Ensure both Templar's nomount.o and NoMount Netlink directory are compiled
+          grep -q "nomount.o" fs/Makefile || echo "obj-\$(CONFIG_NOMOUNT) += nomount.o" >> fs/Makefile
+
+          # 4. Integrate KernelSU-Next
           curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           echo "All Patches applied successfully!"
 
@@ -262,7 +300,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built from ${{ inputs.kernel_repo }} with KernelSU-Next & NoMount Dev Netlink. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built with Full Spoofing, KernelSU-Next & NoMount Dev Netlink. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "release $tag updated"
