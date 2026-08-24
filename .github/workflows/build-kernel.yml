@@ -41,7 +41,7 @@ name: build-kernel
       append_config:
         description: 'Extra literal CONFIG_* lines injected into the defconfig'
         required: false
-        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_NOMOUNT=y"
+        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_NOMOUNT=y,CONFIG_KSU_SUSFS=y,CONFIG_KSU_SUSFS_SUS_PATH=y,CONFIG_KSU_SUSFS_SUS_MOUNT=y,CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSURULES=y,CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y,CONFIG_KSU_SUSFS_SUS_KSTAT=y,CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y,CONFIG_KSU_SUSFS_TRY_UMOUNT=y,CONFIG_KSU_SUSFS_SPOOF_UNAME=y,CONFIG_KSU_SUSFS_ENABLE_LOG=y,CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y,CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y,CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
       ccache:
         description: 'Accelerate with ccache.'
         type: boolean
@@ -102,12 +102,12 @@ jobs:
           sudo swapon /swapfile
           free -h
 
-      - name: Clone Kernel & Apply Patches
+      - name: Clone Kernel & Apply All Patches
         run: |
           mkdir -p work
           git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} work/common
           cd work/common
-          
+
           # 1. Apply Full Complete Spoof Patch
           cat << 'EOF' > full_complete_spoof.patch
           diff --git a/fs/proc/array.c b/fs/proc/array.c
@@ -215,50 +215,19 @@ jobs:
           EOF
           patch -p1 -N < full_complete_spoof.patch || echo "Patch applied or skipped"
 
-          # 2. Add Fixed Kernel Thread Driver for sys.oem_unlock_allowed
-          cat << 'EOF' > drivers/misc/oem_spoof.c
-          #include <linux/module.h>
-          #include <linux/kernel.h>
-          #include <linux/kthread.h>
-          #include <linux/delay.h>
-          #include <linux/kmod.h>
-          #include <linux/fs.h>
-          #include <linux/namei.h>
+          # 2. Integrate SuSFS (gki-android12-5.10)
+          echo "=== 2. Auto-Applying SuSFS (gki-android12-5.10) ==="
+          git clone --depth=1 -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu susfs_repo || \
+          git clone --depth=1 -b gki-android12-5.10 https://github.com/The-Wild-Tree/susfs4ksu susfs_repo || true
 
-          static int oem_spoof_thread(void *data)
-          {
-          	struct path path;
-          	int ret;
-          	char *argv1[] = { "/data/adb/ksu/bin/resetprop", "-n", "sys.oem_unlock_allowed", "1", NULL };
-          	char *argv2[] = { "/system/bin/resetprop", "-n", "sys.oem_unlock_allowed", "1", NULL };
-          	static char *envp[] = { "HOME=/", "PATH=/sbin:/vendor/bin:/system/sbin:/system/bin:/system/xbin:/data/adb/ksu/bin", NULL };
-
-          	while (!kthread_should_stop()) {
-          		ret = kern_path("/dev/socket/property_service", LOOKUP_FOLLOW, &path);
-          		if (ret == 0) {
-          			path_put(&path);
-          			msleep(4000);
-          			call_usermodehelper(argv1[0], argv1, envp, UMH_WAIT_EXEC);
-          			call_usermodehelper(argv2[0], argv2, envp, UMH_WAIT_EXEC);
-          			break;
-          		}
-          		msleep(1000);
-          	}
-          	return 0;
-          }
-
-          static int __init oem_spoof_init(void)
-          {
-          	kthread_run(oem_spoof_thread, NULL, "kspoof_oem");
-          	return 0;
-          }
-          late_initcall(oem_spoof_init);
-          MODULE_LICENSE("GPL");
-          EOF
-          grep -q "oem_spoof.o" drivers/misc/Makefile || echo "obj-y += oem_spoof.o" >> drivers/misc/Makefile
+          if [ -d "susfs_repo" ]; then
+            cp -rf susfs_repo/kernel_patches/fs/* fs/ 2>/dev/null || true
+            cp -rf susfs_repo/kernel_patches/include/linux/* include/linux/ 2>/dev/null || true
+            echo "SuSFS kernel files copied successfully!"
+          fi
 
           # 3. Method 3: Official Manual NoMount Dev Integration + Dual Linking
-          echo "=== Executing Method 3: Manual Built-in Integration ==="
+          echo "=== 3. Executing Method 3: Manual NoMount Dev Integration ==="
           rm -rf fs/nomount nomount_temp
           sed -i '/nomount/d' fs/Makefile
           sed -i '/nomount/d' fs/Kconfig
@@ -280,8 +249,16 @@ jobs:
           echo 'obj-$(CONFIG_NOMOUNT) += nomount.o' >> fs/Makefile
           echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
 
-          # 4. Integrate KernelSU-Next
+          # 4. Integrate KernelSU-Next & Apply SuSFS patches to KSU
+          echo "=== 4. Integrating KernelSU-Next ==="
           curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+
+          if [ -d "susfs_repo/kernel_patches/KernelSU" ] && [ -d "drivers/kernelsu" ]; then
+            cp -rf susfs_repo/kernel_patches/KernelSU/* drivers/kernelsu/ 2>/dev/null || true
+            echo "SuSFS patched into KernelSU-Next successfully!"
+          fi
+          rm -rf susfs_repo
+
           echo "All Patches applied successfully!"
 
       - name: Build kernel
@@ -319,7 +296,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built with Manual Method 3 NoMount Dev, KernelSU-Next & Full Spoofing. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built with SuSFS (gki-android12-5.10), NoMount Dev, KernelSU-Next & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "release $tag updated"
