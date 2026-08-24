@@ -190,9 +190,9 @@ jobs:
           +			if ((p = strstr(buf, "buildvariant = \"userdebug\""))) memcpy(p + 16, "user     \"", 10);
           +			seq_puts(m, buf);
           +			kfree(buf);
-          			return 0;
-          		}
-          		seq_write(m, saved_bootconfig, saved_bootconfig_size);
+          +			return 0;
+          +		}
+          +		seq_write(m, saved_bootconfig, saved_bootconfig_size);
           	}
           	return 0;
           }
@@ -233,6 +233,75 @@ jobs:
           cp -rf ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           patch -p1 -N < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || true
 
+          # Force SuSFS Kconfig symbols so self-heal script cannot strip them
+          if ! grep -q "config KSU_SUSFS" fs/Kconfig; then
+            echo '' >> fs/Kconfig
+            echo 'menu "SuSFS Configuration"' >> fs/Kconfig
+            echo 'config KSU_SUSFS' >> fs/Kconfig
+            echo '	bool "Enable SuSFS support"' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_SUS_PATH' >> fs/Kconfig
+            echo '	bool "Enable SUS Path"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_SUS_MOUNT' >> fs/Kconfig
+            echo '	bool "Enable SUS Mount"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_AUTO_ADD_SUS_KSURULES' >> fs/Kconfig
+            echo '	bool "Auto add SUS KSU rules"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT' >> fs/Kconfig
+            echo '	bool "Auto add SUS bind mount"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_SUS_KSTAT' >> fs/Kconfig
+            echo '	bool "Enable SUS kstat"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_SUS_OVERLAYFS' >> fs/Kconfig
+            echo '	bool "Enable SUS overlayfs"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_TRY_UMOUNT' >> fs/Kconfig
+            echo '	bool "Enable try umount"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT' >> fs/Kconfig
+            echo '	bool "Auto add try umount for bind mount"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_SPOOF_UNAME' >> fs/Kconfig
+            echo '	bool "Enable spoof uname"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_ENABLE_LOG' >> fs/Kconfig
+            echo '	bool "Enable SuSFS log"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS' >> fs/Kconfig
+            echo '	bool "Hide SuSFS symbols"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG' >> fs/Kconfig
+            echo '	bool "Enable spoof cmdline or bootconfig"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_OPEN_REDIRECT' >> fs/Kconfig
+            echo '	bool "Enable open redirect"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'config KSU_SUSFS_SUS_MAP' >> fs/Kconfig
+            echo '	bool "Enable sus map"' >> fs/Kconfig
+            echo '	depends on KSU_SUSFS' >> fs/Kconfig
+            echo '	default y' >> fs/Kconfig
+            echo 'endmenu' >> fs/Kconfig
+          fi
+
+          # Ensure Makefile compiles susfs.o
+          grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
+
           # Wild-Kernel 5.10 VMA_PAD_START & page_size_compat Fallbacks
           if grep -q 'VMA_PAD_START(' fs/proc/task_mmu.c && ! grep -qE '#include <linux/pgsize_migration(_inline)?\.h>|define VMA_PAD_START' fs/proc/task_mmu.c; then
             sed -i '1a #ifndef VMA_PAD_START\n#define VMA_PAD_START(vma) ((vma)->vm_end)\n#endif' fs/proc/task_mmu.c
@@ -250,12 +319,9 @@ jobs:
             sed -i 's/set_nameidata(nd, old_dfd, fake_filename, NULL)/set_nameidata(nd, old_dfd, fake_filename)/g' fs/namei.c
           fi
 
-          # Ensure Makefile compiles susfs.o
-          grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
-
           # 4. Integrate KernelSU-Next
           echo "=== 4. Setting up KernelSU-Next ==="
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash -s dev
 
           # 5. Method 3: Official Manual NoMount Dev Integration
           echo "=== 5. Executing Method 3: Manual NoMount Dev Integration ==="
