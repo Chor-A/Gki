@@ -147,7 +147,7 @@ jobs:
           +		if ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);
           +		if ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);
           +		if ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);
-          +		if ((p = strstr(buf, "buildvariant=eng"))) memcpy(p + 13, "user", 4);
+          +		if ((p = strstr(buf, "buildvariant=eng "))) memcpy(p + 13, "user", 4);
           +		if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
           +		if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
           +		if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
@@ -215,7 +215,7 @@ jobs:
           EOF
           patch -p1 -N < full_complete_spoof.patch || echo "Patch applied or skipped"
 
-          # 2. Add Fixed Kernel Thread Driver for sys.oem_unlock_allowed (Uses resetprop)
+          # 2. Add Fixed Kernel Thread Driver for sys.oem_unlock_allowed
           cat << 'EOF' > drivers/misc/oem_spoof.c
           #include <linux/module.h>
           #include <linux/kernel.h>
@@ -237,7 +237,6 @@ jobs:
           		ret = kern_path("/dev/socket/property_service", LOOKUP_FOLLOW, &path);
           		if (ret == 0) {
           			path_put(&path);
-          			/* Give Android init time to create property memory area */
           			msleep(4000);
           			call_usermodehelper(argv1[0], argv1, envp, UMH_WAIT_EXEC);
           			call_usermodehelper(argv2[0], argv2, envp, UMH_WAIT_EXEC);
@@ -256,9 +255,9 @@ jobs:
           late_initcall(oem_spoof_init);
           MODULE_LICENSE("GPL");
           EOF
-          echo "obj-y += oem_spoof.o" >> drivers/misc/Makefile
+          grep -q "oem_spoof.o" drivers/misc/Makefile || echo "obj-y += oem_spoof.o" >> drivers/misc/Makefile
 
-          # 3. Method 3: Official Manual NoMount Dev Integration
+          # 3. Method 3: Official Manual NoMount Dev Integration + Dual Linking
           echo "=== Executing Method 3: Manual Built-in Integration ==="
           rm -rf fs/nomount nomount_temp
           sed -i '/nomount/d' fs/Makefile
@@ -278,6 +277,7 @@ jobs:
           rm -rf nomount_temp
 
           echo 'source "fs/nomount/Kconfig"' >> fs/Kconfig
+          echo 'obj-$(CONFIG_NOMOUNT) += nomount.o' >> fs/Makefile
           echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
 
           # 4. Integrate KernelSU-Next
@@ -319,7 +319,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built with Manual Method 3 NoMount Dev & Resetprop OEM Spoof. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built with Manual Method 3 NoMount Dev, KernelSU-Next & Full Spoofing. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "release $tag updated"
