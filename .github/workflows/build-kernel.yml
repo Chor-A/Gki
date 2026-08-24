@@ -41,7 +41,7 @@ name: build-kernel
       append_config:
         description: 'Extra literal CONFIG_* lines injected into the defconfig'
         required: false
-        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_NOMOUNT=y,CONFIG_KSU_SUSFS=y,CONFIG_KSU_SUSFS_SUS_PATH=y,CONFIG_KSU_SUSFS_SUS_MOUNT=y,CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSURULES=y,CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y,CONFIG_KSU_SUSFS_SUS_KSTAT=y,CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y,CONFIG_KSU_SUSFS_TRY_UMOUNT=y,CONFIG_KSU_SUSFS_SPOOF_UNAME=y,CONFIG_KSU_SUSFS_ENABLE_LOG=y,CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y,CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y,CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_NOMOUNT=y,CONFIG_KSU_SUSFS=y,CONFIG_KSU_SUSFS_SUS_PATH=y,CONFIG_KSU_SUSFS_SUS_MOUNT=y,CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSURULES=y,CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y,CONFIG_KSU_SUSFS_SUS_KSTAT=y,CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y,CONFIG_KSU_SUSFS_TRY_UMOUNT=y,CONFIG_KSU_SUSFS_SPOOF_UNAME=y,CONFIG_KSU_SUSFS_ENABLE_LOG=y,CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y,CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y,CONFIG_KSU_SUSFS_OPEN_REDIRECT=y,CONFIG_LRU_GEN=y,CONFIG_LRU_GEN_ENABLED=y"
       ccache:
         description: 'Accelerate with ccache.'
         type: boolean
@@ -215,32 +215,47 @@ jobs:
           EOF
           patch -p1 -N < full_complete_spoof.patch || echo "Patch applied or skipped"
 
-          # 2. Integrate SuSFS (Files & Kernel VFS Hooks)
-          echo "=== 2. Auto-Applying SuSFS (gki-android12-5.10) ==="
-          git clone --depth=1 -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu susfs_repo || \
-          git clone --depth=1 -b gki-android12-5.10 https://github.com/The-Wild-Tree/susfs4ksu susfs_repo || \
-          git clone --depth=1 -b gki-android12-5.10 https://github.com/sidex1025/susfs4ksu susfs_repo || true
-
-          if [ -d "susfs_repo" ]; then
-            # Copy source files to fs/ and headers to include/linux/
-            cp -rf susfs_repo/kernel_patches/fs/* fs/ 2>/dev/null || true
-            cp -rf susfs_repo/kernel_patches/include/linux/* include/linux/ 2>/dev/null || true
-
-            # Apply SuSFS Unified Kernel VFS Patch
-            for patch_file in susfs_repo/kernel_patches/*5.10*.patch; do
-              if [ -f "$patch_file" ]; then
-                echo "Applying Kernel SuSFS Patch: $patch_file..."
-                patch -p1 -N < "$patch_file" 2>/dev/null || echo "SuSFS kernel patch applied or merged"
-              fi
-            done
-
-            # Ensure fs/Makefile links susfs.o
-            grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o sus_su.o" >> fs/Makefile
-            echo "SuSFS kernel VFS components patched!"
+          # 2. Apply Custom MGLRU Patch from Repository
+          if [ -f "$GITHUB_WORKSPACE/.github/workflows/patches/mglru.patch" ]; then
+            echo "=== Applying MGLRU Patch from repo ==="
+            patch -p1 -N < "$GITHUB_WORKSPACE/.github/workflows/patches/mglru.patch" || echo "MGLRU patch applied with warnings"
+          elif [ -f "$GITHUB_WORKSPACE/patches/mglru.patch" ]; then
+            echo "=== Applying MGLRU Patch from repo ==="
+            patch -p1 -N < "$GITHUB_WORKSPACE/patches/mglru.patch" || echo "MGLRU patch applied with warnings"
           fi
 
-          # 3. Method 3: Official Manual NoMount Dev Integration
-          echo "=== 3. Executing Method 3: Manual NoMount Dev Integration ==="
+          # 3. Setup KernelSU-Next first
+          echo "=== 3. Setting up KernelSU-Next ==="
+          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+
+          # 4. Integrate SuSFS into Kernel & KernelSU-Next
+          echo "=== 4. Integrating SuSFS (gki-android12-5.10) ==="
+          git clone --depth=1 -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu || \
+          git clone --depth=1 -b gki-android12-5.10 https://github.com/The-Wild-Tree/susfs4ksu.git ../susfs4ksu
+
+          cp -f ../susfs4ksu/kernel_patches/fs/susfs.c fs/
+          cp -f ../susfs4ksu/kernel_patches/fs/susfs.h fs/ 2>/dev/null || true
+          cp -f ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+
+          # Patch Kernel Tree (VFS hooks)
+          patch -p1 -N < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || true
+
+          # Patch KernelSU-Next with SuSFS Supercalls
+          if [ -d "KernelSU-Next" ]; then
+            cd KernelSU-Next
+            patch -p1 -N < ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
+            cd ..
+          fi
+          if [ -d "drivers/kernelsu" ]; then
+            cd drivers/kernelsu
+            patch -p1 -N < ../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
+            cd ../..
+          fi
+
+          grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
+
+          # 5. Method 3: Official Manual NoMount Dev Integration
+          echo "=== 5. Executing Method 3: Manual NoMount Dev Integration ==="
           rm -rf fs/nomount nomount_temp
           sed -i '/nomount/d' fs/Makefile
           sed -i '/nomount/d' fs/Kconfig
@@ -262,34 +277,7 @@ jobs:
           echo 'obj-$(CONFIG_NOMOUNT) += nomount.o' >> fs/Makefile
           echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
 
-          # 4. Integrate KernelSU-Next & Apply SuSFS Integration Patch inside KSU Directory
-          echo "=== 4. Integrating KernelSU-Next with SuSFS 0x555e1 Driver ==="
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-
-          # Patch KernelSU-Next directory with SuSFS KSU patch
-          if [ -d "KernelSU-Next" ]; then
-            KSU_DIR="KernelSU-Next"
-          elif [ -d "drivers/kernelsu" ]; then
-            KSU_DIR="drivers/kernelsu"
-          fi
-
-          if [ -n "$KSU_DIR" ] && [ -d "susfs_repo" ]; then
-            echo "Patching SuSFS hooks into $KSU_DIR..."
-            cp -rf susfs_repo/kernel_patches/KernelSU/* "$KSU_DIR/" 2>/dev/null || true
-
-            cd "$KSU_DIR"
-            for ksu_patch in ../susfs_repo/kernel_patches/*ksu*.patch ../susfs_repo/kernel_patches/*KernelSU*.patch; do
-              if [ -f "$ksu_patch" ]; then
-                echo "Applying $ksu_patch inside $KSU_DIR..."
-                patch -p1 -N < "$ksu_patch" 2>/dev/null || patch -p2 -N < "$ksu_patch" 2>/dev/null || true
-              fi
-            done
-            cd ..
-            echo "KernelSU-Next SuSFS driver patched successfully!"
-          fi
-          rm -rf susfs_repo
-
-          echo "All Patches, Folders & Drivers applied successfully!"
+          echo "All Patches, MGLRU, SuSFS & NoMount Dev applied successfully!"
 
       - name: Build kernel
         run: |
@@ -297,7 +285,7 @@ jobs:
 
       - name: Save ccache cache
         if: ${{ inputs.ccache && always() }}
-        uses: actions/cache@v4
+        uses: actions/cache/save@v4
         with:
           path: work/.ccache
           key: cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-${{ inputs.kernel_branch }}
@@ -326,7 +314,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built with Full SuSFS (Kernel & KSU Patched), NoMount Dev & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built with MGLRU, SuSFS 1.5, NoMount Dev, KernelSU-Next & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "release $tag updated"
