@@ -41,7 +41,7 @@ name: build-kernel
       append_config:
         description: 'Extra literal CONFIG_* lines injected into the defconfig'
         required: false
-        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_NOMOUNT=y,CONFIG_KSU_SUSFS=y,CONFIG_KSU_SUSFS_SUS_PATH=y,CONFIG_KSU_SUSFS_SUS_MOUNT=y,CONFIG_KSU_SUSFS_SUS_KSTAT=y,CONFIG_KSU_SUSFS_SPOOF_UNAME=y,CONFIG_KSU_SUSFS_ENABLE_LOG=y,CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y,CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y,CONFIG_KSU_SUSFS_OPEN_REDIRECT=y,CONFIG_KSU_SUSFS_SUS_MAP=y,CONFIG_LRU_GEN=y,CONFIG_LRU_GEN_ENABLED=y"
+        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_NOMOUNT=y,CONFIG_KSU_SUSFS=y,CONFIG_KSU_SUSFS_SUS_PATH=y,CONFIG_KSU_SUSFS_SUS_MOUNT=y,CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSURULES=y,CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y,CONFIG_KSU_SUSFS_SUS_KSTAT=y,CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y,CONFIG_KSU_SUSFS_TRY_UMOUNT=y,CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y,CONFIG_KSU_SUSFS_SPOOF_UNAME=y,CONFIG_KSU_SUSFS_ENABLE_LOG=y,CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y,CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y,CONFIG_KSU_SUSFS_OPEN_REDIRECT=y,CONFIG_KSU_SUSFS_SUS_MAP=y,CONFIG_LRU_GEN=y,CONFIG_LRU_GEN_ENABLED=y"
       ccache:
         description: 'Accelerate with ccache.'
         type: boolean
@@ -291,7 +291,7 @@ jobs:
           echo 'obj-$(CONFIG_NOMOUNT) += nomount.o' >> fs/Makefile
           echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
 
-          echo "All Patches, MGLRU, SuSFS (Wild-Kernel fixes) & NoMount Dev applied successfully!"
+          echo "All Patches, MGLRU, SuSFS (All 15 Flags) & NoMount Dev applied successfully!"
 
       - name: Build kernel
         run: |
@@ -328,7 +328,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built with Wild-Kernel SuSFS Fixes, MGLRU, NoMount Dev & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built with Full 15-Flag SuSFS, MGLRU, NoMount Dev & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "release $tag updated"
