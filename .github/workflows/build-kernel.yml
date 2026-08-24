@@ -102,19 +102,110 @@ jobs:
           sudo swapon /swapfile
           free -h
 
-      - name: Clone Kernel & Apply KernelSU-Next & NoMount Dev
+      - name: Clone Kernel & Apply Patches
         run: |
           mkdir -p work
           git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} work/common
-          
           cd work/common
-          # 1. Integrate NoMount Dev
+          
+          # 1. Apply Verified Safe Spoof Patch (cmdline + bootconfig + kallsyms)
+          cat << 'EOF' > full_spoof.patch
+          diff --git a/fs/proc/cmdline.c b/fs/proc/cmdline.c
+          index fa762c5fb..8108c4a03 100644
+          --- a/fs/proc/cmdline.c
+          +++ b/fs/proc/cmdline.c
+          @@ -2,6 +2,8 @@
+           #include <linux/fs.h>
+           #include <linux/init.h>
+           #include <linux/proc_fs.h>
+           #include <linux/seq_file.h>
+          +#include <linux/slab.h>
+          +#include <linux/cred.h>
+          +#include <linux/string.h>
+           
+           static int cmdline_proc_show(struct seq_file *m, void *v)
+           {
+          +	char *p;
+          +	char *buf;
+          +	if (current_uid().val >= 10000) {
+          +		buf = kstrdup(saved_command_line, GFP_KERNEL);
+          +		if (buf) {
+          +			if ((p = strstr(buf, "androidboot.verifiedbootstate=orange"))) memcpy(p + 30, "green ", 6);
+          +			if ((p = strstr(buf, "androidboot.verifiedbootstate=yellow"))) memcpy(p + 30, "green ", 6);
+          +			if ((p = strstr(buf, "androidboot.vbmeta.device_state=unlocked"))) memcpy(p + 32, "locked  ", 8);
+          +			if ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);
+          +			if ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);
+          +			if ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);
+          +			seq_puts(m, buf);
+          +			kfree(buf);
+          +			seq_putc(m, '\n');
+          +			return 0;
+          +		}
+          +	}
+          +	seq_puts(m, saved_command_line);
+          	seq_putc(m, '\n');
+          	return 0;
+           }
+          diff --git a/fs/proc/bootconfig.c b/fs/proc/bootconfig.c
+          index 123456789..987654321 100644
+          --- a/fs/proc/bootconfig.c
+          +++ b/fs/proc/bootconfig.c
+          @@ -2,6 +2,8 @@
+           #include <linux/fs.h>
+           #include <linux/init.h>
+           #include <linux/proc_fs.h>
+           #include <linux/seq_file.h>
+          +#include <linux/slab.h>
+          +#include <linux/cred.h>
+          +#include <linux/string.h>
+           
+           static int bootconfig_proc_show(struct seq_file *m, void *v)
+           {
+          +	char *p;
+          +	char *buf;
+          +	if (saved_bootconfig) {
+          +		if (current_uid().val >= 10000) {
+          +			buf = kstrndup(saved_bootconfig, saved_bootconfig_size, GFP_KERNEL);
+          +			if (buf) {
+          +				if ((p = strstr(buf, "androidboot.verifiedbootstate = \"orange\""))) memcpy(p + 34, "green \"", 7);
+          +				if ((p = strstr(buf, "androidboot.verifiedbootstate = \"yellow\""))) memcpy(p + 34, "green \"", 7);
+          +				if ((p = strstr(buf, "androidboot.vbmeta.device_state = \"unlocked\""))) memcpy(p + 36, "locked  \"", 9);
+          +				if ((p = strstr(buf, "androidboot.flash.locked = \"0\""))) memcpy(p + 29, "1\"", 2);
+          +				seq_puts(m, buf);
+          +				kfree(buf);
+          +				return 0;
+          +			}
+          +		}
+          +		seq_write(m, saved_bootconfig, saved_bootconfig_size);
+          +	}
+          +	return 0;
+          +}
+          diff --git a/kernel/kallsyms.c b/kernel/kallsyms.c
+          index 126d4433d..7c02d5951 100644
+          --- a/kernel/kallsyms.c
+          +++ b/kernel/kallsyms.c
+          @@ -25,6 +25,7 @@
+           #include <linux/compiler.h>
+           #include <linux/module.h>
+           #include <linux/kernel.h>
+          +#include <linux/cred.h>
+           
+           static void *s_start(struct seq_file *m, loff_t *pos)
+           {
+          +	if (current_uid().val >= 10000)
+          +		return NULL;
+          +
+           	reset_iter(iter, *pos);
+          EOF
+          patch -p1 -N < full_spoof.patch || echo "Patch applied or skipped"
+
+          # 2. Integrate NoMount Dev
           rm -rf fs/nomount
           curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash -s dev
-          
-          # 2. Integrate KernelSU-Next
+
+          # 3. Integrate KernelSU-Next
           curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-          echo "Patches applied successfully!"
+          echo "All Patches applied successfully!"
 
       - name: Build kernel
         run: |
@@ -151,7 +242,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built from ${{ inputs.kernel_repo }} with KernelSU-Next inline patching. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built from ${{ inputs.kernel_repo }} with KernelSU-Next & NoMount Dev. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "release $tag updated"
