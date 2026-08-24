@@ -215,30 +215,28 @@ jobs:
           EOF
           patch -p1 -N < full_complete_spoof.patch || echo "Patch applied or skipped"
 
-          # 2. Integrate SuSFS Correctly (Native fs/susfs/ & Kconfig registration)
+          # 2. Integrate SuSFS (Files & Unified Patches directly in fs/)
           echo "=== 2. Auto-Applying SuSFS (gki-android12-5.10) ==="
           git clone --depth=1 -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu susfs_repo || \
           git clone --depth=1 -b gki-android12-5.10 https://github.com/The-Wild-Tree/susfs4ksu susfs_repo || \
           git clone --depth=1 -b gki-android12-5.10 https://github.com/sidex1025/susfs4ksu susfs_repo || true
 
           if [ -d "susfs_repo" ]; then
-            # Copy source files to fs/susfs
-            mkdir -p fs/susfs
-            cp -rf susfs_repo/kernel_patches/fs/* fs/susfs/ 2>/dev/null || true
+            # Copy all SuSFS C-source files directly to fs/ and headers to include/linux/
+            cp -rf susfs_repo/kernel_patches/fs/* fs/ 2>/dev/null || true
             cp -rf susfs_repo/kernel_patches/include/linux/* include/linux/ 2>/dev/null || true
 
-            # Register in Kconfig & Makefile so self-heal NEVER strips CONFIG_KSU_SUSFS
-            grep -q "fs/susfs/Kconfig" fs/Kconfig || echo 'source "fs/susfs/Kconfig"' >> fs/Kconfig
-            grep -q "susfs" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs/' >> fs/Makefile
-
-            # Apply Kernel VFS hooks patch
+            # Apply SuSFS Unified Kernel Patches
             for patch_file in susfs_repo/kernel_patches/*5.10*.patch; do
               if [ -f "$patch_file" ]; then
                 echo "Applying $patch_file..."
                 patch -p1 -N < "$patch_file" 2>/dev/null || echo "SuSFS kernel patch applied or merged"
               fi
             done
-            echo "SuSFS kernel core registered and patched!"
+
+            # Ensure direct object linking in fs/Makefile
+            grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o sus_su.o" >> fs/Makefile
+            echo "SuSFS kernel components applied!"
           fi
 
           # 3. Method 3: Official Manual NoMount Dev Integration
@@ -311,7 +309,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built with Full Native SuSFS, NoMount Dev, KernelSU-Next & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built with Native SuSFS, NoMount Dev, KernelSU-Next & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "release $tag updated"
