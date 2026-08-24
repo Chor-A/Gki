@@ -17,7 +17,7 @@ name: build-kernel
       kernel_branch:
         description: 'Kernel source branch'
         required: false
-        default: "Linux-Staging"
+        default: "Linux6-Staging"
       kernel_commit:
         description: 'Kernel source commit'
         required: false
