@@ -41,7 +41,7 @@ name: build-kernel
       append_config:
         description: 'Extra literal CONFIG_* lines injected into the defconfig'
         required: false
-        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y"
+        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_NOMOUNT=y"
       ccache:
         description: 'Accelerate with ccache.'
         type: boolean
@@ -70,9 +70,9 @@ jobs:
       RELEASE_TAG: ${{ inputs.release_tag }}
       CCACHE_OPT: ${{ inputs.ccache && '1' || '' }}
       GITHUB_TOKEN: ${{ github.token }}
-      # Added to bypass the strict KMI ABI check for custom GKI builds
       KMI_SYMBOL_LIST_STRICT_MODE: "0"
       UPDATE_SYMBOL_LIST: "1"
+
     steps:
       - uses: actions/checkout@v5
 
@@ -102,15 +102,19 @@ jobs:
           sudo swapon /swapfile
           free -h
 
-      - name: Clone Kernel & Apply KernelSU-Next
+      - name: Clone Kernel & Apply KernelSU-Next & NoMount Dev
         run: |
           mkdir -p work
-          # Standard GKI builds expect the kernel source inside a 'common' directory
           git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} work/common
           
           cd work/common
+          # 1. Integrate NoMount Dev
+          rm -rf fs/nomount
+          curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash -s dev
+          
+          # 2. Integrate KernelSU-Next
           curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-          echo "KernelSU-Next patches applied successfully!"
+          echo "Patches applied successfully!"
 
       - name: Build kernel
         run: |
