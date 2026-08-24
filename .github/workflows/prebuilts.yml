@@ -158,8 +158,6 @@ jobs:
             echo "no assets to upload"
             exit 0
           fi
-          # Ensure the release exists, tolerating the parallel kernelsu job
-          # creating it concurrently (both jobs run on the same dispatch).
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --latest=false \
               --title "Kernel build prebuilts" \
@@ -168,48 +166,3 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" --clobber "${assets[@]}"
           echo "release $RELEASE_TAG updated"
-
-  kernelsu:
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      FORCE: ${{ inputs.force && '1' || '0' }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Mirror ksud binaries from upstream Actions run
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if [ "$FORCE" != "1" ]; then
-            existing=$(gh release view "$RELEASE_TAG" --json assets -q '.assets[].name' 2>/dev/null || true)
-            needed="ksu-ksud-aarch64-linux-android.zip ksu-ksud-armv7-linux-androideabi.zip"
-            if [ -n "$existing" ]; then
-              missing=$(for a in $needed; do printf '%s\n' "$existing" | grep -qx "$a" || echo "$a"; done)
-              if [ -z "$missing" ]; then
-                echo "ksud assets already released, skipping (set force to re-mirror)"
-                exit 0
-              fi
-              echo "missing ksud assets: $missing"
-            fi
-          fi
-          ./build/kernelsu-mirror.sh
-
-      - name: Publish ksu assets to prebuilts release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --latest=false \
-              --title "Kernel build prebuilts" \
-              --notes "Prebuilt components consumed by build-kernel.sh and the build-kernel workflow: clang toolchain, kernel-build-tools, build-tools and mirrored ksud binaries (arm64/armv7) that replace the kernel on device." || true
-          fi
-          assets=()
-          for f in ksu-assets/ksu-*.zip; do
-            [ -f "$f" ] && assets+=("$f")
-          done
-          [ "${#assets[@]}" -gt 0 ] || { echo "no new ksu assets, nothing to upload"; exit 0; }
-          gh release upload "$RELEASE_TAG" --clobber "${assets[@]}"
-          echo "uploaded ${#assets[@]} ksu assets to $RELEASE_TAG"
