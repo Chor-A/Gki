@@ -108,10 +108,24 @@ jobs:
           git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} work/common
           cd work/common
           
-          # 1. Apply Global Boot-Time Spoof Patch
-          cat << 'EOF' > full_spoof.patch
+          # 1. Apply All 4 Files Spoof Patch (array.c + cmdline.c + bootconfig.c + kallsyms.c)
+          cat << 'EOF' > full_complete_spoof.patch
+          diff --git a/fs/proc/array.c b/fs/proc/array.c
+          index f5da74234..8a91e931f 100644
+          --- a/fs/proc/array.c
+          +++ b/fs/proc/array.c
+          @@ -179,6 +179,9 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
+           	task_unlock(p);
+           	rcu_read_unlock();
+           
+          +	if (current_uid().val >= 10000)
+          +		tpid = 0;
+          +
+           	if (umask >= 0)
+           		seq_printf(m, "Umask:\t%#04o\n", umask);
+           	seq_puts(m, "State:\t");
           diff --git a/fs/proc/cmdline.c b/fs/proc/cmdline.c
-          index fa762c5fb..8108c4a03 100644
+          index fa762c5fb..9108c4a03 100644
           --- a/fs/proc/cmdline.c
           +++ b/fs/proc/cmdline.c
           @@ -2,6 +2,8 @@
@@ -131,6 +145,12 @@ jobs:
           +		if ((p = strstr(buf, "androidboot.verifiedbootstate=yellow"))) memcpy(p + 30, "green ", 6);
           +		if ((p = strstr(buf, "androidboot.vbmeta.device_state=unlocked"))) memcpy(p + 32, "locked  ", 8);
           +		if ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);
+          +		if ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);
+          +		if ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);
+          +		if ((p = strstr(buf, "buildvariant=eng"))) memcpy(p + 13, "user", 4);
+          +		if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
+          +		if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
+          +		if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
           +		seq_puts(m, buf);
           +		kfree(buf);
           +		seq_putc(m, '\n');
@@ -163,16 +183,37 @@ jobs:
           +			if ((p = strstr(buf, "androidboot.verifiedbootstate = \"yellow\""))) memcpy(p + 34, "green \"", 7);
           +			if ((p = strstr(buf, "androidboot.vbmeta.device_state = \"unlocked\""))) memcpy(p + 36, "locked  \"", 9);
           +			if ((p = strstr(buf, "androidboot.flash.locked = \"0\""))) memcpy(p + 29, "1\"", 2);
+          +			if ((p = strstr(buf, "androidboot.mode = \"custom\""))) memcpy(p + 20, "normal\"", 7);
+          +			if ((p = strstr(buf, "androidboot.secureboot = \"0\""))) memcpy(p + 26, "1\"", 2);
+          +			if ((p = strstr(buf, "androidboot.lockstate = \"unlocked\""))) memcpy(p + 25, "locked  \"", 9);
+          +			if ((p = strstr(buf, "androidboot.selinux = \"permissive\""))) memcpy(p + 23, "enforcing \"", 11);
+          +			if ((p = strstr(buf, "buildvariant = \"userdebug\""))) memcpy(p + 16, "user     \"", 10);
           +			seq_puts(m, buf);
           +			kfree(buf);
           +			return 0;
           +		}
           +		seq_write(m, saved_bootconfig, saved_bootconfig_size);
-          +	}
-          +	return 0;
-          +}
+          	}
+          	return 0;
+          }
+          diff --git a/kernel/kallsyms.c b/kernel/kallsyms.c
+          index 126d4433d..7c02d5951 100644
+          --- a/kernel/kallsyms.c
+          +++ b/kernel/kallsyms.c
+          @@ -25,6 +25,7 @@
+           #include <linux/compiler.h>
+           #include <linux/module.h>
+           #include <linux/kernel.h>
+          +#include <linux/cred.h>
+           
+           static void *s_start(struct seq_file *m, loff_t *pos)
+           {
+          +	if (current_uid().val >= 10000)
+          +		return NULL;
+          +
+           	reset_iter(iter, *pos);
           EOF
-          patch -p1 -N < full_spoof.patch || echo "Patch applied or skipped"
+          patch -p1 -N < full_complete_spoof.patch || echo "Patch applied or skipped"
 
           # 2. Clean Templar's old Legacy NoMount files & Install Official NoMount Dev Netlink Driver
           rm -f fs/nomount.c
