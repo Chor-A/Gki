@@ -70,6 +70,9 @@ jobs:
       RELEASE_TAG: ${{ inputs.release_tag }}
       CCACHE_OPT: ${{ inputs.ccache && '1' || '' }}
       GITHUB_TOKEN: ${{ github.token }}
+      # Added to bypass the strict KMI ABI check for custom GKI builds
+      KMI_SYMBOL_LIST_STRICT_MODE: "0"
+      UPDATE_SYMBOL_LIST: "1"
     steps:
       - uses: actions/checkout@v5
 
