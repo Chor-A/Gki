@@ -192,9 +192,27 @@ jobs:
           fi
 
           # =========================================================================
-          # 3. APPLY STANDALONE SUSFS + ZEROMOUNT PATCH (WITH KCONFIG & FORCE LINKING)
+          # 3. SETUP KERNELSU-NEXT (PROPER WAY)
           # =========================================================================
-          echo "=== 3. Applying Standalone SUSFS & ZeroMount Patch ==="
+          echo "=== 3. Setting up KernelSU-Next ==="
+          rm -rf KernelSU-Next drivers/kernelsu
+          git clone --depth=1 -b dev https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
+          
+          mkdir -p drivers/kernelsu
+          cp -r KernelSU-Next/kernel/* drivers/kernelsu/
+          
+          grep -q "kernelsu" drivers/Makefile || echo 'obj-y += kernelsu/' >> drivers/Makefile
+          grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+
+          # FORCE LINK KSU DIRECTLY IN CONFIGS TO PREVENT ANY LLD UNDEFINED ERRORS
+          sed -i 's/CONFIG_KSU=m/CONFIG_KSU=y/g' arch/arm64/configs/gki_defconfig || true
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_NEXT=y" >> arch/arm64/configs/gki_defconfig
+
+          # =========================================================================
+          # 4. APPLY STANDALONE SUSFS + ZEROMOUNT PATCH
+          # =========================================================================
+          echo "=== 4. Applying Standalone SUSFS & ZeroMount Patch ==="
           SUSFS_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/susfs_zeromount.patch"
           if [ ! -f "$SUSFS_PATH" ]; then
             SUSFS_PATH="$GITHUB_WORKSPACE/patches/susfs_zeromount.patch"
@@ -202,16 +220,15 @@ jobs:
 
           if [ -f "$SUSFS_PATH" ]; then
             sed -i 's/\r$//' "$SUSFS_PATH"
+            
+            # Apply patch (ignoring the submodule error using || true)
             patch -p1 -N --no-backup-if-mismatch < "$SUSFS_PATH" || echo "Notice: Submodule hunk might be skipped."
             
-            # Ensure SUSFS & ZeroMount entries in fs/Makefile
-            grep -q "susfs.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
-            grep -q "zeromount.o" fs/Makefile || echo 'obj-$(CONFIG_ZEROMOUNT) += zeromount.o' >> fs/Makefile
+            # FORCE COMPILE ZEROMOUNT & SUSFS
+            grep -q "susfs.o" fs/Makefile || echo 'obj-y += susfs.o' >> fs/Makefile
+            grep -q "zeromount.o" fs/Makefile || echo 'obj-y += zeromount.o' >> fs/Makefile
             
-            # FORCE KernelSU to compile (solves ld.lld undefined symbol error)
-            grep -q "kernelsu" drivers/Makefile || echo 'obj-y += kernelsu/' >> drivers/Makefile
-            grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-
+            # INJECT MISSING CONFIGS SAFELY
             if ! grep -q "CONFIG_KSU_SUSFS" fs/Kconfig; then
               cat << 'EOF' >> fs/Kconfig
 
@@ -295,22 +312,6 @@ jobs:
             exit 1
           fi
 
-          # =========================================================================
-          # 4. SETUP KERNELSU-NEXT
-          # =========================================================================
-          echo "=== 4. Setting up KernelSU-Next ==="
-          rm -rf KernelSU-Next drivers/kernelsu
-          
-          # Clone KSU-Next and ensure proper linkage
-          git clone --depth=1 -b dev https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
-          
-          mkdir -p drivers
-          ln -sfn ../KernelSU-Next/kernel drivers/kernelsu
-          
-          # FORCE ENABLE KSU IN DEFCONFIG
-          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_NEXT=y" >> arch/arm64/configs/gki_defconfig
-          
           echo "✅ KernelSU-Next, MGLRU, ZeroMount, SUSFS & Full Spoofs applied successfully!"
 
       - name: Build kernel
