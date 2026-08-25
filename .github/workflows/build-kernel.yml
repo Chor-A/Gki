@@ -202,7 +202,6 @@ jobs:
           +		if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
           +		if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
           +		
-          +		/* Bootconfig formatting sometimes uses quotes */
           +		if ((p = strstr(buf, "\"orange\""))) memcpy(p + 1, "green\" ", 7);
           +		if ((p = strstr(buf, "\"yellow\""))) memcpy(p + 1, "green\" ", 7);
           +		if ((p = strstr(buf, "\"unlocked\""))) memcpy(p + 1, "locked\"  ", 9);
@@ -240,7 +239,6 @@ jobs:
           rm -rf KernelSU-Next drivers/kernelsu
           git clone --depth=1 -b dev https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           
-          # LOCATE PATCH 70 FOR KSU-NEXT
           PATCH_70="$GITHUB_WORKSPACE/.github/workflows/patches/70_ksu_safety-kernelsu-next-5.10.patch"
           if [ ! -f "$PATCH_70" ]; then
             PATCH_70="$GITHUB_WORKSPACE/patches/70_ksu_safety-kernelsu-next-5.10.patch"
@@ -253,11 +251,15 @@ jobs:
             patch -p1 --forward < "$PATCH_70" || echo "Notice: Patch 70 hunk might be skipped or already applied."
             cd ..
           else
-            echo "❌ ERROR: 70_ksu_safety patch not found! Linker will fail."
+            echo "❌ ERROR: 70_ksu_safety patch not found!"
+            exit 1
           fi
           
           mkdir -p drivers/kernelsu
           cp -r KernelSU-Next/kernel/* drivers/kernelsu/
+          if [ -d "KernelSU-Next/uapi" ]; then
+            cp -r KernelSU-Next/uapi drivers/kernelsu/
+          fi
           
           grep -q "kernelsu" drivers/Makefile || echo 'obj-y += kernelsu/' >> drivers/Makefile
           grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
@@ -279,7 +281,6 @@ jobs:
           if [ -f "$SUSFS_PATH" ]; then
             sed -i 's/\r$//' "$SUSFS_PATH"
             
-            # Apply patch (ignoring the submodule error using || true)
             patch -p1 -N --no-backup-if-mismatch < "$SUSFS_PATH" || echo "Notice: Submodule hunk might be skipped."
             
             # FORCE COMPILE ZEROMOUNT & SUSFS
