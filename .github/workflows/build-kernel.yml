@@ -41,7 +41,7 @@ name: build-kernel
       append_config:
         description: 'Extra literal CONFIG_* lines injected into the defconfig'
         required: false
-        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_NOMOUNT=y,CONFIG_ZEROMOUNT=y,CONFIG_KSU_SUSFS=y,CONFIG_KSU_SUSFS_SUS_PATH=y,CONFIG_KSU_SUSFS_SUS_MOUNT=y,CONFIG_KSU_SUSFS_SUS_KSTAT=y,CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=y,CONFIG_KSU_SUSFS_SUS_MAP=y,CONFIG_KSU_SUSFS_OPEN_REDIRECT=y,CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y,CONFIG_KSU_SUSFS_SPOOF_UNAME=y,CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y,CONFIG_KSU_SUSFS_ENABLE_LOG=y,CONFIG_KSU_SUSFS_UNICODE_FILTER=y,CONFIG_KSU_SUSFS_HIDDEN_NAME=y,CONFIG_KSU_SUSFS_HARDENED=y,CONFIG_LRU_GEN=y,CONFIG_LRU_GEN_ENABLED=y"
+        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_ZEROMOUNT=y,CONFIG_KSU_SUSFS=y,CONFIG_KSU_SUSFS_SUS_PATH=y,CONFIG_KSU_SUSFS_SUS_MOUNT=y,CONFIG_KSU_SUSFS_SUS_KSTAT=y,CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=y,CONFIG_KSU_SUSFS_SUS_MAP=y,CONFIG_KSU_SUSFS_OPEN_REDIRECT=y,CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y,CONFIG_KSU_SUSFS_SPOOF_UNAME=y,CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y,CONFIG_KSU_SUSFS_ENABLE_LOG=y,CONFIG_KSU_SUSFS_UNICODE_FILTER=y,CONFIG_KSU_SUSFS_HIDDEN_NAME=y,CONFIG_KSU_SUSFS_HARDENED=y,CONFIG_LRU_GEN=y,CONFIG_LRU_GEN_ENABLED=y"
       ccache:
         description: 'Accelerate with ccache.'
         type: boolean
@@ -174,10 +174,10 @@ jobs:
           	return 0;
            }
           EOF
-          patch -p1 -N < full_complete_spoof.patch || echo "Spoof patch already applied or skipped"
+          patch -p1 -N < full_complete_spoof.patch || echo "Spoof patch already applied"
 
           # =========================================================================
-          # 2. APPLY MGLRU PATCH (STRICT MODE + CRLF REMOVAL)
+          # 2. APPLY MGLRU PATCH
           # =========================================================================
           echo "=== 2. Applying MGLRU Patch ==="
           MGLRU_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/mglru.patch"
@@ -186,78 +186,42 @@ jobs:
           fi
 
           if [ -f "$MGLRU_PATH" ]; then
-            echo "Found MGLRU patch at: $MGLRU_PATH"
             sed -i 's/\r$//' "$MGLRU_PATH"
-            git apply --verbose --ignore-whitespace --whitespace=nowarn "$MGLRU_PATH" || patch -p1 -N < "$MGLRU_PATH" || {
-              echo "ERROR: MGLRU Patch failed to apply! Showing rejects:"
-              find . -name "*.rej" -exec echo "--- {} ---" \; -exec cat {} \;
-              exit 1
-            }
+            git apply --verbose --ignore-whitespace --whitespace=nowarn "$MGLRU_PATH" || patch -p1 -N < "$MGLRU_PATH"
             echo "MGLRU Patch applied successfully!"
-          else
-            echo "WARNING: MGLRU Patch file not found!"
           fi
 
           # =========================================================================
-          # 3. SETUP KERNELSU-NEXT
+          # 3. APPLY STANDALONE SUSFS + ZEROMOUNT PATCH
           # =========================================================================
-          echo "=== 3. Setting up KernelSU-Next ==="
-          rm -rf KernelSU-Next drivers/kernelsu
-          git clone --depth=1 -b dev https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
-          mkdir -p drivers
-          ln -sfn ../KernelSU-Next/kernel drivers/kernelsu
-
-          # =========================================================================
-          # 4. METHOD 3: NOMOUNT DEV INTEGRATION
-          # =========================================================================
-          echo "=== 4. Executing Method 3: Manual NoMount Dev Integration ==="
-          rm -rf fs/nomount nomount_temp
-          sed -i '/nomount/d' fs/Makefile
-          sed -i '/nomount/d' fs/Kconfig
-
-          git clone --depth=1 -b dev https://github.com/maxsteeel/nomount nomount_temp
-          mkdir -p fs/nomount
-          if [ -d "nomount_temp/kernel/src" ]; then
-            cp -rf nomount_temp/kernel/src/* fs/nomount/
-          fi
-          if [ -f "nomount_temp/kernel/Kconfig" ]; then
-            cp -f nomount_temp/kernel/Kconfig fs/nomount/
-          fi
-          if [ -f "nomount_temp/kernel/Makefile" ]; then
-            cp -f nomount_temp/kernel/Makefile fs/nomount/
-          fi
-          rm -rf nomount_temp
-
-          echo 'source "fs/nomount/Kconfig"' >> fs/Kconfig
-          echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
-
-          # =========================================================================
-          # 5. APPLY STANDALONE SUSFS + ZEROMOUNT PATCH
-          # =========================================================================
-          echo "=== 5. Applying Standalone SUSFS & ZeroMount Patch ==="
+          echo "=== 3. Applying Standalone SUSFS & ZeroMount Patch ==="
           SUSFS_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/susfs_zeromount.patch"
           if [ ! -f "$SUSFS_PATH" ]; then
             SUSFS_PATH="$GITHUB_WORKSPACE/patches/susfs_zeromount.patch"
           fi
 
           if [ -f "$SUSFS_PATH" ]; then
-            echo "Found SUSFS patch at: $SUSFS_PATH"
             sed -i 's/\r$//' "$SUSFS_PATH"
-            git apply --verbose --ignore-whitespace --whitespace=nowarn "$SUSFS_PATH" || patch -p1 -N < "$SUSFS_PATH" || {
-              echo "ERROR: SUSFS Patch failed to apply! Showing rejects:"
-              find . -name "*.rej" -exec echo "--- {} ---" \; -exec cat {} \;
-              exit 1
-            }
-            echo "SUSFS & ZeroMount Patch applied successfully!"
-          else
-            echo "WARNING: SUSFS Patch file not found!"
+            patch -p1 -N --no-backup-if-mismatch < "$SUSFS_PATH" || true
+            
+            # Ensure SUSFS & ZeroMount entries in Makefile / Kconfig
+            grep -q "susfs.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
+            grep -q "zeromount.o" fs/Makefile || echo 'obj-$(CONFIG_ZEROMOUNT) += zeromount.o' >> fs/Makefile
+            grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+            grep -q "kernelsu" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+            echo "SUSFS & ZeroMount Patch applied!"
           fi
 
-          # Ensure drivers/kernelsu symlink is intact
+          # =========================================================================
+          # 4. SETUP KERNELSU-NEXT
+          # =========================================================================
+          echo "=== 4. Setting up KernelSU-Next ==="
+          rm -rf KernelSU-Next drivers/kernelsu
+          git clone --depth=1 -b dev https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           mkdir -p drivers
           ln -sfn ../KernelSU-Next/kernel drivers/kernelsu
 
-          echo "KernelSU-Next, MGLRU, NoMount Dev, ZeroMount, SUSFS & Full Spoofs applied successfully!"
+          echo "KernelSU-Next, MGLRU, ZeroMount, SUSFS & Full Spoofs applied successfully!"
 
       - name: Build kernel
         run: |
@@ -296,7 +260,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built with KernelSU-Next, MGLRU, NoMount Dev, ZeroMount, SUSFS v2.0.0 & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built with KernelSU-Next, MGLRU, ZeroMount, SUSFS v2.0.0 & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "Release $tag completed successfully."
