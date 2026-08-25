@@ -236,22 +236,14 @@ jobs:
           fi
 
           # =========================================================================
-          # 3. SETUP KERNELSU-NEXT (PINNED) & APPLY LOCAL 70 PATCH
+          # 3. SETUP KERNELSU-NEXT (LATEST BRANCH) & APPLY LOCAL 70 PATCH
           # =========================================================================
-          echo "=== 3. Setting up KernelSU-Next ==="
+          echo "=== 3. Setting up KernelSU-Next (Latest Branch) ==="
           rm -rf KernelSU-Next drivers/kernelsu
+          # Clone latest main branch without depth limit so commit counting works
           git clone https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           
           cd KernelSU-Next
-          echo "Pinning KernelSU-Next to stable commit to avoid patch failures..."
-          KSU_NEXT_PIN=$(curl -s https://raw.githubusercontent.com/Enginex0/Super-Builders/main/android12-5.10/kernelsu-next-pin.txt | tr -d '\r\n')
-          if [ -n "$KSU_NEXT_PIN" ]; then
-            git checkout "$KSU_NEXT_PIN"
-          else
-            echo "Warning: Could not fetch pin, using latest."
-          fi
-          cd ..
-          
           PATCH_70="$GITHUB_WORKSPACE/.github/workflows/patches/70_ksu_safety-kernelsu-next-5.10.patch"
           if [ ! -f "$PATCH_70" ]; then
             PATCH_70="$GITHUB_WORKSPACE/patches/70_ksu_safety-kernelsu-next-5.10.patch"
@@ -260,13 +252,17 @@ jobs:
           if [ -f "$PATCH_70" ]; then
             echo "Applying local KSU-Next SUSFS compatibility patch 70..."
             sed -i 's/\r$//' "$PATCH_70"
-            cd KernelSU-Next
-            patch -p1 --forward < "$PATCH_70" || echo "Notice: Patch 70 hunk might be skipped or already applied."
-            cd ..
+            patch -p1 --forward || echo "Notice: Patch 70 hunk might be skipped or already applied."
           else
             echo "❌ ERROR: 70_ksu_safety patch not found!"
             exit 1
           fi
+          
+          # Extract version from the latest fetched state
+          KSU_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.5")
+          KSU_COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo "1500")
+          KSU_VERSION=$((10000 + KSU_COMMITS))
+          cd ..
           
           mkdir -p drivers/kernelsu
           cp -r KernelSU-Next/kernel/* drivers/kernelsu/
@@ -274,18 +270,8 @@ jobs:
             cp -r KernelSU-Next/uapi drivers/kernelsu/
           fi
           
-          # --- BULLETPROOF VERSION FIX (DIRECT KBUILD OVERRIDE) ---
-          echo "Extracting actual KernelSU-Next version..."
-          cd KernelSU-Next
-          KSU_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.5")
-          KSU_COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo "1500")
-          KSU_VERSION=$((10000 + KSU_COMMITS))
-          cd ..
-          
           echo "Hardcoding KSU Version: $KSU_VERSION and Tag: $KSU_TAG into drivers/kernelsu/Kbuild..."
-          # Prepend direct fallback definitions to Kbuild so Google's build harness cannot wipe them out
           perl -pi -e 'if ($. == 1) { print "KSU_GIT_VERSION ?= $KSU_VERSION\nKSU_VERSION_TAG ?= \"$KSU_TAG\"\n" }' drivers/kernelsu/Kbuild
-          # -------------------------------------------------------
           
           grep -q "kernelsu" drivers/Makefile || echo 'obj-y += kernelsu/' >> drivers/Makefile
           grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
