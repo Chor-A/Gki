@@ -113,7 +113,6 @@ jobs:
       - name: Clone Kernel & Clean Hardcoded NoMount
         run: |
           mkdir -p work
-          # Doing a full clone so git revert has the necessary history to reverse the commit safely
           git clone -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} work/common
           cd work/common
 
@@ -125,10 +124,9 @@ jobs:
           git config --global user.email "github-actions@github.com"
           git config --global user.name "GitHub Actions"
           
-          # Revert the hardcoded NoMount v1.1.1 commit to clean the VFS tree
           git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
 
-      - name: Apply Spoofs, MGLRU, NoMount Beta & KernelSU-Next
+      - name: Apply Spoofs, NoMount Beta, MGLRU & KernelSU-Next
         run: |
           cd work/common
 
@@ -232,9 +230,16 @@ jobs:
           patch -p1 -N --no-backup-if-mismatch < full_complete_spoof.patch || echo "Spoof patch already applied"
 
           # =========================================================================
-          # 2. APPLY MGLRU PATCH
+          # 2. SETUP NOMOUNT (BETA BRANCH) - Applied BEFORE MGLRU
           # =========================================================================
-          echo "=== 2. Applying MGLRU Patch ==="
+          echo "=== 2. Setting up NoMount (Beta Branch) ==="
+          curl -s https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/beta/kernel/setup.sh | bash -s beta
+          echo "CONFIG_NOMOUNT=y" >> arch/arm64/configs/gki_defconfig
+
+          # =========================================================================
+          # 3. APPLY MGLRU PATCH
+          # =========================================================================
+          echo "=== 3. Applying MGLRU Patch ==="
           MGLRU_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/mglru.patch"
           if [ ! -f "$MGLRU_PATH" ]; then
             MGLRU_PATH="$GITHUB_WORKSPACE/patches/mglru.patch"
@@ -247,29 +252,19 @@ jobs:
           fi
 
           # =========================================================================
-          # 3. SETUP NOMOUNT (BETA BRANCH)
-          # =========================================================================
-          echo "=== 3. Setting up NoMount (Beta Branch) ==="
-          curl -s https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/beta/kernel/setup.sh | bash -s beta
-          echo "CONFIG_NOMOUNT=y" >> arch/arm64/configs/gki_defconfig
-
-          # =========================================================================
           # 4. SETUP KERNELSU-NEXT (LATEST BRANCH)
           # =========================================================================
           echo "=== 4. Setting up KernelSU-Next (Latest Branch) ==="
           rm -rf KernelSU-Next drivers/kernelsu
           
-          # Clone absolute latest main branch
           git clone https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           
-          # Extract exact version from the fetched state
           cd KernelSU-Next
           export KSU_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.5")
           KSU_COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo "1500")
           export KSU_VERSION=$((10000 + KSU_COMMITS))
           cd ..
           
-          # Move to drivers
           mkdir -p drivers/kernelsu
           cp -r KernelSU-Next/kernel/* drivers/kernelsu/
           if [ -d "KernelSU-Next/uapi" ]; then
