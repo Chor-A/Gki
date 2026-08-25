@@ -29,7 +29,7 @@ name: build-kernel
         options:
           - clang 19
           - clang 14
-        default: "clang 19"
+        default: "clang 14"
       defconfig_fragment_exclude:
         description: 'Defconfig fragments to exclude (space- or comma-separated names)'
         required: false
@@ -41,7 +41,7 @@ name: build-kernel
       append_config:
         description: 'Extra literal CONFIG_* lines injected into the defconfig'
         required: false
-        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_KSU_SUSFS=y,CONFIG_KSU_SUSFS_SUS_PATH=y,CONFIG_KSU_SUSFS_SUS_MOUNT=y,CONFIG_KSU_SUSFS_SUS_KSTAT=y,CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=y,CONFIG_KSU_SUSFS_SUS_MAP=y,CONFIG_KSU_SUSFS_OPEN_REDIRECT=y,CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y,CONFIG_KSU_SUSFS_SPOOF_UNAME=y,CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y,CONFIG_KSU_SUSFS_ENABLE_LOG=y,CONFIG_KSU_SUSFS_UNICODE_FILTER=y,CONFIG_KSU_SUSFS_HIDDEN_NAME=y,CONFIG_KSU_SUSFS_HARDENED=y,CONFIG_ZEROMOUNT=y,CONFIG_LRU_GEN=y,CONFIG_LRU_GEN_ENABLED=y"
+        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_NOMOUNT=y,CONFIG_ZEROMOUNT=y,CONFIG_KSU_SUSFS=y,CONFIG_KSU_SUSFS_SUS_PATH=y,CONFIG_KSU_SUSFS_SUS_MOUNT=y,CONFIG_KSU_SUSFS_SUS_KSTAT=y,CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=y,CONFIG_KSU_SUSFS_SUS_MAP=y,CONFIG_KSU_SUSFS_OPEN_REDIRECT=y,CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y,CONFIG_KSU_SUSFS_SPOOF_UNAME=y,CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y,CONFIG_KSU_SUSFS_ENABLE_LOG=y,CONFIG_KSU_SUSFS_UNICODE_FILTER=y,CONFIG_KSU_SUSFS_HIDDEN_NAME=y,CONFIG_KSU_SUSFS_HARDENED=y,CONFIG_LRU_GEN=y,CONFIG_LRU_GEN_ENABLED=y"
       ccache:
         description: 'Accelerate with ccache.'
         type: boolean
@@ -74,7 +74,8 @@ jobs:
       UPDATE_SYMBOL_LIST: "1"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v5
 
       - name: Free disk space
         run: |
@@ -114,29 +115,149 @@ jobs:
           git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} work/common
           cd work/common
 
-          # 1. Clone KernelSU-Next to root (Matches patch symlink: drivers/kernelsu -> ../KernelSU-Next/kernel)
-          echo "=== Cloning KernelSU-Next ==="
-          git clone --depth=1 -b dev https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
-
-          # 2. Apply SUSFS + ZeroMount + KSU Patch
-          echo "=== Applying Standalone SUSFS & ZeroMount Patch ==="
-          if [ -f "$GITHUB_WORKSPACE/patches/susfs_zeromount.patch" ]; then
-            patch -p1 -N < "$GITHUB_WORKSPACE/patches/susfs_zeromount.patch" || echo "SUSFS patch applied with warnings"
-          elif [ -f "$GITHUB_WORKSPACE/.github/workflows/patches/susfs_zeromount.patch" ]; then
-            patch -p1 -N < "$GITHUB_WORKSPACE/.github/workflows/patches/susfs_zeromount.patch" || echo "SUSFS patch applied with warnings"
+          if [ -n "${{ env.KERNEL_COMMIT }}" ]; then
+            git fetch --depth=1 origin ${{ env.KERNEL_COMMIT }}
+            git checkout ${{ env.KERNEL_COMMIT }}
           fi
 
-          # Ensure symlink from patch exists
+          # =========================================================================
+          # 1. APPLY FULL COMPLETE SPOOF PATCH
+          # =========================================================================
+          echo "=== 1. Applying Full Complete Spoof Patch ==="
+          cat << 'EOF' > full_complete_spoof.patch
+          diff --git a/fs/proc/array.c b/fs/proc/array.c
+          --- a/fs/proc/array.c
+          +++ b/fs/proc/array.c
+          @@ -179,6 +179,9 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
+           	task_unlock(p);
+           	rcu_read_unlock();
+           
+          +	if (current_uid().val >= 10000)
+          +		tpid = 0;
+          +
+           	if (umask >= 0)
+           		seq_printf(m, "Umask:\t%#04o\n", umask);
+           	seq_puts(m, "State:\t");
+          diff --git a/fs/proc/cmdline.c b/fs/proc/cmdline.c
+          --- a/fs/proc/cmdline.c
+          +++ b/fs/proc/cmdline.c
+          @@ -2,6 +2,8 @@
+           #include <linux/fs.h>
+           #include <linux/init.h>
+           #include <linux/proc_fs.h>
+           #include <linux/seq_file.h>
+          +#include <linux/slab.h>
+          +#include <linux/string.h>
+           
+           static int cmdline_proc_show(struct seq_file *m, void *v)
+           {
+          +	char *p;
+          +	char *buf = kstrdup(saved_command_line, GFP_KERNEL);
+          +	if (buf) {
+          +		if ((p = strstr(buf, "androidboot.verifiedbootstate=orange"))) memcpy(p + 30, "green ", 6);
+          +		if ((p = strstr(buf, "androidboot.verifiedbootstate=yellow"))) memcpy(p + 30, "green ", 6);
+          +		if ((p = strstr(buf, "androidboot.vbmeta.device_state=unlocked"))) memcpy(p + 32, "locked  ", 8);
+          +		if ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);
+          +		if ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);
+          +		if ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);
+          +		if ((p = strstr(buf, "buildvariant=eng "))) memcpy(p + 13, "user", 4);
+          +		if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
+          +		if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
+          +		if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
+          +		seq_puts(m, buf);
+          +		kfree(buf);
+          +		seq_putc(m, '\n');
+          +		return 0;
+          +	}
+          +	seq_puts(m, saved_command_line);
+          	seq_putc(m, '\n');
+          	return 0;
+           }
+          EOF
+          patch -p1 -N < full_complete_spoof.patch || echo "Spoof patch already applied or skipped"
+
+          # =========================================================================
+          # 2. APPLY MGLRU PATCH (STRICT MODE + CRLF REMOVAL)
+          # =========================================================================
+          echo "=== 2. Applying MGLRU Patch ==="
+          MGLRU_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/mglru.patch"
+          if [ ! -f "$MGLRU_PATH" ]; then
+            MGLRU_PATH="$GITHUB_WORKSPACE/patches/mglru.patch"
+          fi
+
+          if [ -f "$MGLRU_PATH" ]; then
+            echo "Found MGLRU patch at: $MGLRU_PATH"
+            sed -i 's/\r$//' "$MGLRU_PATH"
+            git apply --verbose --ignore-whitespace --whitespace=nowarn "$MGLRU_PATH" || patch -p1 -N < "$MGLRU_PATH" || {
+              echo "ERROR: MGLRU Patch failed to apply! Showing rejects:"
+              find . -name "*.rej" -exec echo "--- {} ---" \; -exec cat {} \;
+              exit 1
+            }
+            echo "MGLRU Patch applied successfully!"
+          else
+            echo "WARNING: MGLRU Patch file not found!"
+          fi
+
+          # =========================================================================
+          # 3. SETUP KERNELSU-NEXT
+          # =========================================================================
+          echo "=== 3. Setting up KernelSU-Next ==="
+          rm -rf KernelSU-Next drivers/kernelsu
+          git clone --depth=1 -b dev https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           mkdir -p drivers
           ln -sfn ../KernelSU-Next/kernel drivers/kernelsu
 
-          # 3. Apply MGLRU Patch if present
-          if [ -f "$GITHUB_WORKSPACE/patches/mglru.patch" ]; then
-            echo "=== Applying MGLRU Patch ==="
-            patch -p1 -N < "$GITHUB_WORKSPACE/patches/mglru.patch" || echo "MGLRU patch applied with warnings"
+          # =========================================================================
+          # 4. METHOD 3: NOMOUNT DEV INTEGRATION
+          # =========================================================================
+          echo "=== 4. Executing Method 3: Manual NoMount Dev Integration ==="
+          rm -rf fs/nomount nomount_temp
+          sed -i '/nomount/d' fs/Makefile
+          sed -i '/nomount/d' fs/Kconfig
+
+          git clone --depth=1 -b dev https://github.com/maxsteeel/nomount nomount_temp
+          mkdir -p fs/nomount
+          if [ -d "nomount_temp/kernel/src" ]; then
+            cp -rf nomount_temp/kernel/src/* fs/nomount/
+          fi
+          if [ -f "nomount_temp/kernel/Kconfig" ]; then
+            cp -f nomount_temp/kernel/Kconfig fs/nomount/
+          fi
+          if [ -f "nomount_temp/kernel/Makefile" ]; then
+            cp -f nomount_temp/kernel/Makefile fs/nomount/
+          fi
+          rm -rf nomount_temp
+
+          echo 'source "fs/nomount/Kconfig"' >> fs/Kconfig
+          echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
+
+          # =========================================================================
+          # 5. APPLY STANDALONE SUSFS + ZEROMOUNT PATCH
+          # =========================================================================
+          echo "=== 5. Applying Standalone SUSFS & ZeroMount Patch ==="
+          SUSFS_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/susfs_zeromount.patch"
+          if [ ! -f "$SUSFS_PATH" ]; then
+            SUSFS_PATH="$GITHUB_WORKSPACE/patches/susfs_zeromount.patch"
           fi
 
-          echo "Kernel patched successfully with SUSFS v2.0, ZeroMount, and KernelSU-Next!"
+          if [ -f "$SUSFS_PATH" ]; then
+            echo "Found SUSFS patch at: $SUSFS_PATH"
+            sed -i 's/\r$//' "$SUSFS_PATH"
+            git apply --verbose --ignore-whitespace --whitespace=nowarn "$SUSFS_PATH" || patch -p1 -N < "$SUSFS_PATH" || {
+              echo "ERROR: SUSFS Patch failed to apply! Showing rejects:"
+              find . -name "*.rej" -exec echo "--- {} ---" \; -exec cat {} \;
+              exit 1
+            }
+            echo "SUSFS & ZeroMount Patch applied successfully!"
+          else
+            echo "WARNING: SUSFS Patch file not found!"
+          fi
+
+          # Ensure drivers/kernelsu symlink is intact
+          mkdir -p drivers
+          ln -sfn ../KernelSU-Next/kernel drivers/kernelsu
+
+          echo "KernelSU-Next, MGLRU, NoMount Dev, ZeroMount, SUSFS & Full Spoofs applied successfully!"
 
       - name: Build kernel
         run: |
@@ -174,8 +295,8 @@ jobs:
             gh release upload "$tag" --clobber "${assets[@]}"
           else
             gh release create "$tag" \
-              --title "Templar Kernel GKI $tag (SUSFS + ZeroMount)" \
-              --notes "Built with KernelSU-Next, SUSFS v2.0.0, ZeroMount & MGLRU. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --title "Templar Kernel GKI $tag" \
+              --notes "Built with KernelSU-Next, MGLRU, NoMount Dev, ZeroMount, SUSFS v2.0.0 & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "Release $tag completed successfully."
