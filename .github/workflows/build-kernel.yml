@@ -192,11 +192,27 @@ jobs:
           fi
 
           # =========================================================================
-          # 3. SETUP KERNELSU-NEXT (PROPER WAY)
+          # 3. SETUP KERNELSU-NEXT & APPLY KSU-SPECIFIC PATCH
           # =========================================================================
           echo "=== 3. Setting up KernelSU-Next ==="
           rm -rf KernelSU-Next drivers/kernelsu
           git clone --depth=1 -b dev https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
+          
+          # LOCATE PATCH 70 FOR KSU-NEXT
+          PATCH_70="$GITHUB_WORKSPACE/.github/workflows/patches/70_ksu_safety-kernelsu-next-5.10.patch"
+          if [ ! -f "$PATCH_70" ]; then
+            PATCH_70="$GITHUB_WORKSPACE/patches/70_ksu_safety-kernelsu-next-5.10.patch"
+          fi
+
+          if [ -f "$PATCH_70" ]; then
+            echo "Applying KSU-Next SUSFS compatibility patch..."
+            sed -i 's/\r$//' "$PATCH_70"
+            cd KernelSU-Next
+            patch -p1 --forward < "$PATCH_70" || echo "Notice: Patch 70 hunk might be skipped or already applied."
+            cd ..
+          else
+            echo "❌ ERROR: 70_ksu_safety patch not found! Linker will fail."
+          fi
           
           mkdir -p drivers/kernelsu
           cp -r KernelSU-Next/kernel/* drivers/kernelsu/
