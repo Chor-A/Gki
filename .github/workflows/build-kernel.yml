@@ -126,7 +126,7 @@ jobs:
           
           git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
 
-      - name: Apply Spoofs, NoMount Beta, MGLRU & KernelSU-Next
+      - name: Apply Spoofs, Manual NoMount, MGLRU & KernelSU-Next
         run: |
           cd work/common
 
@@ -230,10 +230,16 @@ jobs:
           patch -p1 -N --no-backup-if-mismatch < full_complete_spoof.patch || echo "Spoof patch already applied"
 
           # =========================================================================
-          # 2. SETUP NOMOUNT (BETA BRANCH) - Applied BEFORE MGLRU
+          # 2. SETUP NOMOUNT (MANUAL INTEGRATION - DEV BRANCH)
           # =========================================================================
-          echo "=== 2. Setting up NoMount (Beta Branch) ==="
-          curl -s https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/beta/kernel/setup.sh | bash -s beta
+          echo "=== 2. Setting up NoMount (Manual Method) ==="
+          git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
+          
+          mkdir -p fs/nomount
+          cp -f ../nomount_repo/kernel/src/* fs/nomount/
+          
+          grep -q 'fs/nomount/Kconfig' fs/Kconfig || echo 'source "fs/nomount/Kconfig"' >> fs/Kconfig
+          grep -q 'nomount/' fs/Makefile || echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
           echo "CONFIG_NOMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
           # =========================================================================
@@ -281,7 +287,7 @@ jobs:
           echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_NEXT=y" >> arch/arm64/configs/gki_defconfig
 
-          echo "✅ NoMount Beta, KernelSU-Next, MGLRU & Spoofs applied successfully!"
+          echo "✅ Manual NoMount, KernelSU-Next, MGLRU & Spoofs applied successfully!"
 
       - name: Build kernel
         run: |
@@ -320,7 +326,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built with KernelSU-Next, MGLRU, NoMount (Beta) & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built with KernelSU-Next, MGLRU, NoMount (Manual Dev) & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "Release $tag completed successfully."
