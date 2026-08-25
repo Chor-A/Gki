@@ -1,5 +1,6 @@
 name: build-kernel
-"on":
+
+on:
   workflow_dispatch:
     inputs:
       publish_release:
@@ -93,10 +94,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: work/.ccache
-          key: cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-${{ inputs.kernel_branch }}
+          key: cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-${{ inputs.kernel_branch }}-${{ github.run_id }}
           restore-keys: |
+            cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-${{ inputs.kernel_branch }}-
             cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-
-            cfx-ccache-${{ env.CLANG_ASSET }}-
           fail-on-cache-miss: false
 
       - name: Add 24G swap
@@ -214,7 +215,10 @@ jobs:
            	return 0;
            }
           EOF
-          patch -p1 -N < full_complete_spoof.patch || echo "Spoof patch already applied"
+          
+          # Use Perl instead of sed to ensure empty context lines have a valid leading space
+          perl -pi -e 's/^$/ /' full_complete_spoof.patch
+          patch -p1 -N --no-backup-if-mismatch < full_complete_spoof.patch || echo "Spoof patch already applied"
 
           # =========================================================================
           # 2. APPLY MGLRU PATCH
@@ -269,6 +273,18 @@ jobs:
           if [ -d "KernelSU-Next/uapi" ]; then
             cp -r KernelSU-Next/uapi drivers/kernelsu/
           fi
+          
+          # --- BULLETPROOF VERSION FIX (USING PERL) ---
+          echo "Extracting actual KernelSU-Next version..."
+          cd KernelSU-Next
+          export KSU_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.5")
+          KSU_COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo "1500")
+          export KSU_VERSION=$((10000 + KSU_COMMITS))
+          cd ..
+          
+          echo "Injecting KSU Version: $KSU_VERSION and Tag: $KSU_TAG into build script using Perl..."
+          perl -pi -e 'if ($. == 1) { print "export KSU_GIT_VERSION=$ENV{KSU_VERSION}\nexport KSU_VERSION_TAG=$ENV{KSU_TAG}\n" }' "$GITHUB_WORKSPACE/build-kernel.sh"
+          # ---------------------------------------------
           
           grep -q "kernelsu" drivers/Makefile || echo 'obj-y += kernelsu/' >> drivers/Makefile
           grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
@@ -391,7 +407,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: work/.ccache
-          key: cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-${{ inputs.kernel_branch }}
+          key: cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-${{ inputs.kernel_branch }}-${{ github.run_id }}
 
       - name: Publish release
         if: ${{ inputs.publish_release }}
