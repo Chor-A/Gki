@@ -187,8 +187,12 @@ jobs:
 
           if [ -f "$MGLRU_PATH" ]; then
             sed -i 's/\r$//' "$MGLRU_PATH"
-            git apply --verbose --ignore-whitespace --whitespace=nowarn "$MGLRU_PATH" || patch -p1 -N < "$MGLRU_PATH"
-            echo "MGLRU Patch applied successfully!"
+            git apply --verbose --ignore-whitespace --whitespace=nowarn "$MGLRU_PATH" || patch -p1 -N < "$MGLRU_PATH" || {
+              echo "❌ ERROR: MGLRU Patch failed! Check rejects below:"
+              find . -name "*.rej" -exec echo "--- {} ---" \; -exec cat {} \;
+              exit 1
+            }
+            echo "✅ MGLRU Patch applied successfully!"
           fi
 
           # =========================================================================
@@ -202,90 +206,91 @@ jobs:
 
           if [ -f "$SUSFS_PATH" ]; then
             sed -i 's/\r$//' "$SUSFS_PATH"
-            patch -p1 -N --no-backup-if-mismatch < "$SUSFS_PATH" || true
+            patch -p1 -N --no-backup-if-mismatch < "$SUSFS_PATH" || echo "Notice: Submodule hunk might be skipped."
             
+            # Ensure SUSFS & ZeroMount entries in Makefile / Kconfig
             grep -q "susfs.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
             grep -q "zeromount.o" fs/Makefile || echo 'obj-$(CONFIG_ZEROMOUNT) += zeromount.o' >> fs/Makefile
             grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
             grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
-            # YAHAN SAARI DEFINITIONS HAIN (FIXED INDENTATION FOR YAML)
+            # YAHAN SAARI DEFINITIONS HAIN TAQKI COMPILER INHE PEHCHAAN LE
             if ! grep -q "CONFIG_KSU_SUSFS" fs/Kconfig; then
               cat << 'EOF' >> fs/Kconfig
 
-            config ZEROMOUNT
-            	bool "ZeroMount Path Redirection"
-            	default y
+          config ZEROMOUNT
+          	bool "ZeroMount Path Redirection"
+          	default y
 
-            config KSU_SUSFS
-            	bool "KernelSU SUSFS"
-            	default y
+          config KSU_SUSFS
+          	bool "KernelSU SUSFS"
+          	default y
 
-            config KSU_SUSFS_SUS_PATH
-            	bool "SUSFS Path"
-            	depends on KSU_SUSFS
-            	default y
+          config KSU_SUSFS_SUS_PATH
+          	bool "SUSFS Path"
+          	depends on KSU_SUSFS
+          	default y
 
-            config KSU_SUSFS_SUS_MOUNT
-            	bool "SUSFS Mount"
-            	depends on KSU_SUSFS
-            	default y
+          config KSU_SUSFS_SUS_MOUNT
+          	bool "SUSFS Mount"
+          	depends on KSU_SUSFS
+          	default y
 
-            config KSU_SUSFS_SUS_KSTAT
-            	bool "SUSFS Kstat"
-            	depends on KSU_SUSFS
-            	default y
+          config KSU_SUSFS_SUS_KSTAT
+          	bool "SUSFS Kstat"
+          	depends on KSU_SUSFS
+          	default y
 
-            config KSU_SUSFS_SUS_KSTAT_REDIRECT
-            	bool "SUSFS kstat redirect"
-            	depends on KSU_SUSFS_SUS_KSTAT
-            	default y
+          config KSU_SUSFS_SUS_KSTAT_REDIRECT
+          	bool "SUSFS kstat redirect"
+          	depends on KSU_SUSFS_SUS_KSTAT
+          	default y
 
-            config KSU_SUSFS_SUS_MAP
-            	bool "SUSFS Map"
-            	depends on KSU_SUSFS
-            	default y
+          config KSU_SUSFS_SUS_MAP
+          	bool "SUSFS Map"
+          	depends on KSU_SUSFS
+          	default y
 
-            config KSU_SUSFS_OPEN_REDIRECT
-            	bool "SUSFS Open Redirect"
-            	depends on KSU_SUSFS
-            	default y
+          config KSU_SUSFS_OPEN_REDIRECT
+          	bool "SUSFS Open Redirect"
+          	depends on KSU_SUSFS
+          	default y
 
-            config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-            	bool "SUSFS Spoof Cmdline"
-            	depends on KSU_SUSFS
-            	default y
+          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          	bool "SUSFS Spoof Cmdline"
+          	depends on KSU_SUSFS
+          	default y
 
-            config KSU_SUSFS_SPOOF_UNAME
-            	bool "SUSFS Spoof Uname"
-            	depends on KSU_SUSFS
-            	default y
+          config KSU_SUSFS_SPOOF_UNAME
+          	bool "SUSFS Spoof Uname"
+          	depends on KSU_SUSFS
+          	default y
 
-            config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-            	bool "SUSFS Hide Symbols"
-            	depends on KSU_SUSFS
-            	default y
+          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          	bool "SUSFS Hide Symbols"
+          	depends on KSU_SUSFS
+          	default y
 
-            config KSU_SUSFS_ENABLE_LOG
-            	bool "SUSFS Logging"
-            	depends on KSU_SUSFS
-            	default y
+          config KSU_SUSFS_ENABLE_LOG
+          	bool "SUSFS Logging"
+          	depends on KSU_SUSFS
+          	default y
 
-            config KSU_SUSFS_UNICODE_FILTER
-            	bool "Unicode Filter"
-            	depends on KSU_SUSFS
-            	default y
+          config KSU_SUSFS_UNICODE_FILTER
+          	bool "Unicode Filter"
+          	depends on KSU_SUSFS
+          	default y
 
-            config KSU_SUSFS_HIDDEN_NAME
-            	bool "Hidden Name"
-            	depends on KSU_SUSFS_SUS_PATH
-            	default y
+          config KSU_SUSFS_HIDDEN_NAME
+          	bool "Hidden Name"
+          	depends on KSU_SUSFS_SUS_PATH
+          	default y
 
-            config KSU_SUSFS_HARDENED
-            	bool "Hardened SUSFS"
-            	depends on KSU_SUSFS
-            	default y
-            EOF
+          config KSU_SUSFS_HARDENED
+          	bool "Hardened SUSFS"
+          	depends on KSU_SUSFS
+          	default y
+          EOF
             fi
             echo "✅ SUSFS & ZeroMount Patched & Verified successfully!"
           else
@@ -323,25 +328,4 @@ jobs:
         run: |
           tag="$RELEASE_TAG"
           if [ -z "$tag" ]; then
-            tag="kernel-$(date -u +%Y%m%d-%H%M)"
-          fi
-          
-          cd "$GITHUB_WORKSPACE/work/dist"
-          pkg="$GITHUB_WORKSPACE/work/pkg"
-          mkdir -p "$pkg"
-          assets=()
-          for f in Image Image.lz4 Image.gz vmlinux System.map ikconfig .config; do
-            [ -f "$f" ] && assets+=("$f")
-          done
-          tar -I 'zstd -T0' -cf "$pkg/kernel-dist.tar.zst" .
-          assets+=("$pkg/kernel-dist.tar.zst")
-          
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" --clobber "${assets[@]}"
-          else
-            gh release create "$tag" \
-              --title "Templar Kernel GKI $tag" \
-              --notes "Built with KernelSU-Next, MGLRU, ZeroMount, SUSFS v2.0.0 & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
-              "${assets[@]}"
-          fi
-          echo "Release $tag completed successfully."
+            tag="kernel-$(date -u +%Y%m
