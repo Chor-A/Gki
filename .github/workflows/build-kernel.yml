@@ -131,11 +131,10 @@ jobs:
           cd work/common
 
           # =========================================================================
-          # 1. APPLY FULL COMPLETE SPOOF PATCH (CMDLINE & BOOTCONFIG)
+          # 1. APPLY FULL COMPLETE SPOOF PATCH (CORRECTED HEADERS)
           # =========================================================================
           echo "=== 1. Applying Full Complete Spoof Patch ==="
           cat << 'EOF' > full_complete_spoof.patch
-          diff --git a/fs/proc/array.c b/fs/proc/array.c
           --- a/fs/proc/array.c
           +++ b/fs/proc/array.c
           @@ -179,6 +179,9 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
@@ -148,10 +147,9 @@ jobs:
            	if (umask >= 0)
            		seq_printf(m, "Umask:\t%#04o\n", umask);
            	seq_puts(m, "State:\t");
-          diff --git a/fs/proc/cmdline.c b/fs/proc/cmdline.c
           --- a/fs/proc/cmdline.c
           +++ b/fs/proc/cmdline.c
-          @@ -2,6 +2,8 @@
+          @@ -2,6 +2,24 @@
            #include <linux/fs.h>
            #include <linux/init.h>
            #include <linux/proc_fs.h>
@@ -179,19 +177,18 @@ jobs:
           +		seq_putc(m, '\n');
           +		return 0;
           +	}
-          	seq_puts(m, saved_command_line);
-          	seq_putc(m, '\n');
-          	return 0;
+           	seq_puts(m, saved_command_line);
+           	seq_putc(m, '\n');
+           	return 0;
            }
-          diff --git a/fs/proc/bootconfig.c b/fs/proc/bootconfig.c
           --- a/fs/proc/bootconfig.c
           +++ b/fs/proc/bootconfig.c
-          @@ -8,6 +8,8 @@
+          @@ -8,6 +8,27 @@
            #include <linux/proc_fs.h>
            #include <linux/seq_file.h>
            #include <linux/bootconfig.h>
           +#include <linux/string.h>
-           #include <linux/slab.h>
+          +#include <linux/slab.h>
            
            static char *saved_boot_config;
            
@@ -210,11 +207,9 @@ jobs:
           +		if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
           +		if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
           +		if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
-          +		
           +		if ((p = strstr(buf, "\"orange\""))) memcpy(p + 1, "green\" ", 7);
           +		if ((p = strstr(buf, "\"yellow\""))) memcpy(p + 1, "green\" ", 7);
           +		if ((p = strstr(buf, "\"unlocked\""))) memcpy(p + 1, "locked\"  ", 9);
-          +
           +		seq_puts(m, buf);
           +		kfree(buf);
           +		return 0;
@@ -224,9 +219,7 @@ jobs:
            	return 0;
            }
           EOF
-          
-          # Fix any raw blank lines in the patch to satisfy git/patch requirements
-          perl -pi -e 's/^\+$/+ /' full_complete_spoof.patch
+
           patch -p1 -N --no-backup-if-mismatch < full_complete_spoof.patch || echo "Spoof patch already applied"
 
           # =========================================================================
