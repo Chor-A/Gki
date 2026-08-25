@@ -261,6 +261,19 @@ jobs:
             cp -r KernelSU-Next/uapi drivers/kernelsu/
           fi
           
+          # AUTOMATIC FIX FOR THE KERNEL_UMOUNT.C PREPROCESSOR ERROR
+          if [ -f "drivers/kernelsu/feature/kernel_umount.c" ]; then
+            python3 -c '
+              path = "drivers/kernelsu/feature/kernel_umount.c"
+              with open(path, "r") as f:
+                  content = f.read()
+              content = content.replace("#ifndef CONFIG_KSU_SUSFS\n    // There are 6 scenarios:", "    // There are 6 scenarios:")
+              content = content.replace("\t\treturn 0;\n\t}\n#endif // #ifndef CONFIG_KSU_SUSFS", "\t\treturn 0;\n\t}")
+              with open(path, "w") as f:
+                  f.write(content)
+            ' || true
+          fi
+          
           grep -q "kernelsu" drivers/Makefile || echo 'obj-y += kernelsu/' >> drivers/Makefile
           grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
