@@ -121,7 +121,7 @@ jobs:
           fi
 
           # =========================================================================
-          # 1. APPLY FULL COMPLETE SPOOF PATCH
+          # 1. APPLY FULL COMPLETE SPOOF PATCH (CMDLINE & BOOTCONFIG)
           # =========================================================================
           echo "=== 1. Applying Full Complete Spoof Patch ==="
           cat << 'EOF' > full_complete_spoof.patch
@@ -172,6 +172,48 @@ jobs:
           +	seq_puts(m, saved_command_line);
           	seq_putc(m, '\n');
           	return 0;
+           }
+          diff --git a/fs/proc/bootconfig.c b/fs/proc/bootconfig.c
+          --- a/fs/proc/bootconfig.c
+          +++ b/fs/proc/bootconfig.c
+          @@ -2,6 +2,8 @@
+           #include <linux/fs.h>
+           #include <linux/init.h>
+           #include <linux/proc_fs.h>
+           #include <linux/seq_file.h>
+          +#include <linux/slab.h>
+          +#include <linux/string.h>
+           
+           static char *saved_boot_config;
+           
+           static int boot_config_proc_show(struct seq_file *m, void *v)
+           {
+          +	char *p;
+          +	char *buf = kstrdup(saved_boot_config, GFP_KERNEL);
+          +	if (buf) {
+          +		if ((p = strstr(buf, "androidboot.verifiedbootstate=orange"))) memcpy(p + 30, "green ", 6);
+          +		if ((p = strstr(buf, "androidboot.verifiedbootstate=yellow"))) memcpy(p + 30, "green ", 6);
+          +		if ((p = strstr(buf, "androidboot.vbmeta.device_state=unlocked"))) memcpy(p + 32, "locked  ", 8);
+          +		if ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);
+          +		if ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);
+          +		if ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);
+          +		if ((p = strstr(buf, "buildvariant=eng "))) memcpy(p + 13, "user", 4);
+          +		if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
+          +		if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
+          +		if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
+          +		
+          +		/* Bootconfig formatting sometimes uses quotes */
+          +		if ((p = strstr(buf, "\"orange\""))) memcpy(p + 1, "green\" ", 7);
+          +		if ((p = strstr(buf, "\"yellow\""))) memcpy(p + 1, "green\" ", 7);
+          +		if ((p = strstr(buf, "\"unlocked\""))) memcpy(p + 1, "locked\"  ", 9);
+          +
+          +		seq_puts(m, buf);
+          +		kfree(buf);
+          +		return 0;
+          +	}
+           	if (saved_boot_config)
+           		seq_puts(m, saved_boot_config);
+           	return 0;
            }
           EOF
           patch -p1 -N < full_complete_spoof.patch || echo "Spoof patch already applied"
