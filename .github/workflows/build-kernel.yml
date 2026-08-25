@@ -233,22 +233,22 @@ jobs:
           fi
 
           # =========================================================================
-          # 3. SETUP KERNELSU-NEXT (WITH PINNED COMMIT) & APPLY LOCAL 70 PATCH
+          # 3. SETUP KERNELSU-NEXT (PINNED) & APPLY LOCAL 70 PATCH
           # =========================================================================
           echo "=== 3. Setting up KernelSU-Next ==="
           rm -rf KernelSU-Next drivers/kernelsu
           git clone https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           
           cd KernelSU-Next
-          echo "Fetching official KernelSU-Next commit pin to guarantee flawless patching..."
+          echo "Pinning KernelSU-Next to stable commit to avoid patch failures..."
           KSU_NEXT_PIN=$(curl -s https://raw.githubusercontent.com/Enginex0/Super-Builders/main/android12-5.10/kernelsu-next-pin.txt | tr -d '\r\n')
           if [ -n "$KSU_NEXT_PIN" ]; then
-            echo "Pinning KernelSU-Next to commit: $KSU_NEXT_PIN"
-            git checkout $KSU_NEXT_PIN
+            git checkout "$KSU_NEXT_PIN"
           else
             echo "Warning: Could not fetch pin, using latest."
           fi
-
+          cd ..
+          
           PATCH_70="$GITHUB_WORKSPACE/.github/workflows/patches/70_ksu_safety-kernelsu-next-5.10.patch"
           if [ ! -f "$PATCH_70" ]; then
             PATCH_70="$GITHUB_WORKSPACE/patches/70_ksu_safety-kernelsu-next-5.10.patch"
@@ -257,17 +257,16 @@ jobs:
           if [ -f "$PATCH_70" ]; then
             echo "Applying local KSU-Next SUSFS compatibility patch 70..."
             sed -i 's/\r$//' "$PATCH_70"
-            patch -p1 --forward < "$PATCH_70" || echo "Notice: Patch 70 hunk skipped or already applied."
+            cd KernelSU-Next
+            patch -p1 --forward < "$PATCH_70" || echo "Notice: Patch 70 hunk might be skipped or already applied."
+            cd ..
           else
             echo "❌ ERROR: 70_ksu_safety patch not found!"
             exit 1
           fi
-          cd ..
           
           mkdir -p drivers/kernelsu
           cp -r KernelSU-Next/kernel/* drivers/kernelsu/
-          
-          # Fix missing header files by copying uapi folder
           if [ -d "KernelSU-Next/uapi" ]; then
             cp -r KernelSU-Next/uapi drivers/kernelsu/
           fi
@@ -280,12 +279,12 @@ jobs:
           echo "CONFIG_KSU_NEXT=y" >> arch/arm64/configs/gki_defconfig
 
           # =========================================================================
-          # 4. APPLY YOUR CUSTOM SUSFS + ZEROMOUNT PATCH
+          # 4. APPLY YOUR FIXED SUSFS + ZEROMOUNT PATCH
           # =========================================================================
-          echo "=== 4. Applying Standalone SUSFS & ZeroMount Patch ==="
-          SUSFS_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/susfs_zeromount.patch"
+          echo "=== 4. Applying Fixed Standalone SUSFS & ZeroMount Patch ==="
+          SUSFS_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/susfs_zeromount_fixed.patch"
           if [ ! -f "$SUSFS_PATH" ]; then
-            SUSFS_PATH="$GITHUB_WORKSPACE/patches/susfs_zeromount.patch"
+            SUSFS_PATH="$GITHUB_WORKSPACE/patches/susfs_zeromount_fixed.patch"
           fi
 
           if [ -f "$SUSFS_PATH" ]; then
@@ -375,9 +374,9 @@ jobs:
           	default y
           EOF
             fi
-            echo "✅ SUSFS & ZeroMount Patched & Verified successfully!"
+            echo "✅ Fixed SUSFS & ZeroMount Patched & Verified successfully!"
           else
-            echo "❌ ERROR: SUSFS Patch file not found!"
+            echo "❌ ERROR: susfs_zeromount_fixed.patch file not found!"
             exit 1
           fi
 
