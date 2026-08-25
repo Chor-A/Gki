@@ -201,7 +201,7 @@ jobs:
           +		if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
           +		if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
           +		if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
-          +		+
+          +		
           +		if ((p = strstr(buf, "\"orange\""))) memcpy(p + 1, "green\" ", 7);
           +		if ((p = strstr(buf, "\"yellow\""))) memcpy(p + 1, "green\" ", 7);
           +		if ((p = strstr(buf, "\"unlocked\""))) memcpy(p + 1, "locked\"  ", 9);
@@ -244,7 +244,15 @@ jobs:
           git clone https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           
           cd KernelSU-Next
-          PATCH_70="$GITHUB_WORKSPACE/.github/workflows/patches/70_ksu_safety-kernelsu-next-5.10.patch"
+          # Look for the newly generated latest patch first
+          PATCH_70="$GITHUB_WORKSPACE/.github/workflows/patches/70_ksu_safety-kernelsu-next-latest.patch"
+          if [ ! -f "$PATCH_70" ]; then
+            PATCH_70="$GITHUB_WORKSPACE/patches/70_ksu_safety-kernelsu-next-latest.patch"
+          fi
+          # Fallback to the old name just in case you named it the same
+          if [ ! -f "$PATCH_70" ]; then
+            PATCH_70="$GITHUB_WORKSPACE/.github/workflows/patches/70_ksu_safety-kernelsu-next-5.10.patch"
+          fi
           if [ ! -f "$PATCH_70" ]; then
             PATCH_70="$GITHUB_WORKSPACE/patches/70_ksu_safety-kernelsu-next-5.10.patch"
           fi
@@ -252,16 +260,16 @@ jobs:
           if [ -f "$PATCH_70" ]; then
             echo "Applying local KSU-Next SUSFS compatibility patch 70..."
             sed -i 's/\r$//' "$PATCH_70"
-            patch -p1 --forward || echo "Notice: Patch 70 hunk might be skipped or already applied."
+            patch -p1 --forward < "$PATCH_70" || echo "Notice: Patch 70 hunk might be skipped or already applied."
           else
             echo "❌ ERROR: 70_ksu_safety patch not found!"
             exit 1
           fi
           
           # Extract version from the latest fetched state
-          KSU_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.5")
+          export KSU_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.5")
           KSU_COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo "1500")
-          KSU_VERSION=$((10000 + KSU_COMMITS))
+          export KSU_VERSION=$((10000 + KSU_COMMITS))
           cd ..
           
           mkdir -p drivers/kernelsu
@@ -271,7 +279,7 @@ jobs:
           fi
           
           echo "Hardcoding KSU Version: $KSU_VERSION and Tag: $KSU_TAG into drivers/kernelsu/Kbuild..."
-          perl -pi -e 'if ($. == 1) { print "KSU_GIT_VERSION ?= $KSU_VERSION\nKSU_VERSION_TAG ?= \"$KSU_TAG\"\n" }' drivers/kernelsu/Kbuild
+          perl -pi -e 'if ($. == 1) { print "KSU_GIT_VERSION ?= $ENV{KSU_VERSION}\nKSU_VERSION_TAG ?= \"$ENV{KSU_TAG}\"\n" }' drivers/kernelsu/Kbuild
           
           grep -q "kernelsu" drivers/Makefile || echo 'obj-y += kernelsu/' >> drivers/Makefile
           grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
