@@ -29,7 +29,7 @@ name: build-kernel
         options:
           - clang 19
           - clang 14
-        default: "clang 14"
+        default: "clang 19"
       defconfig_fragment_exclude:
         description: 'Defconfig fragments to exclude (space- or comma-separated names)'
         required: false
