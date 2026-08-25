@@ -201,7 +201,7 @@ jobs:
           +		if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
           +		if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
           +		if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
-          +		
+          +		+
           +		if ((p = strstr(buf, "\"orange\""))) memcpy(p + 1, "green\" ", 7);
           +		if ((p = strstr(buf, "\"yellow\""))) memcpy(p + 1, "green\" ", 7);
           +		if ((p = strstr(buf, "\"unlocked\""))) memcpy(p + 1, "locked\"  ", 9);
@@ -216,8 +216,8 @@ jobs:
            }
           EOF
           
-          # Use Perl instead of sed to ensure empty context lines have a valid leading space
-          perl -pi -e 's/^$/ /' full_complete_spoof.patch
+          # Fix any raw blank lines in the patch to satisfy git/patch requirements
+          perl -pi -e 's/^\+$/+ /' full_complete_spoof.patch
           patch -p1 -N --no-backup-if-mismatch < full_complete_spoof.patch || echo "Spoof patch already applied"
 
           # =========================================================================
@@ -274,17 +274,18 @@ jobs:
             cp -r KernelSU-Next/uapi drivers/kernelsu/
           fi
           
-          # --- BULLETPROOF VERSION FIX (USING PERL) ---
+          # --- BULLETPROOF VERSION FIX (DIRECT KBUILD OVERRIDE) ---
           echo "Extracting actual KernelSU-Next version..."
           cd KernelSU-Next
-          export KSU_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.5")
+          KSU_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.5")
           KSU_COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo "1500")
-          export KSU_VERSION=$((10000 + KSU_COMMITS))
+          KSU_VERSION=$((10000 + KSU_COMMITS))
           cd ..
           
-          echo "Injecting KSU Version: $KSU_VERSION and Tag: $KSU_TAG into build script using Perl..."
-          perl -pi -e 'if ($. == 1) { print "export KSU_GIT_VERSION=$ENV{KSU_VERSION}\nexport KSU_VERSION_TAG=$ENV{KSU_TAG}\n" }' "$GITHUB_WORKSPACE/build-kernel.sh"
-          # ---------------------------------------------
+          echo "Hardcoding KSU Version: $KSU_VERSION and Tag: $KSU_TAG into drivers/kernelsu/Kbuild..."
+          # Prepend direct fallback definitions to Kbuild so Google's build harness cannot wipe them out
+          perl -pi -e 'if ($. == 1) { print "KSU_GIT_VERSION ?= $KSU_VERSION\nKSU_VERSION_TAG ?= \"$KSU_TAG\"\n" }' drivers/kernelsu/Kbuild
+          # -------------------------------------------------------
           
           grep -q "kernelsu" drivers/Makefile || echo 'obj-y += kernelsu/' >> drivers/Makefile
           grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
