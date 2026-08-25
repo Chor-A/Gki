@@ -192,7 +192,7 @@ jobs:
           fi
 
           # =========================================================================
-          # 3. APPLY STANDALONE SUSFS + ZEROMOUNT PATCH
+          # 3. APPLY STANDALONE SUSFS + ZEROMOUNT PATCH (WITH COMPLETE KCONFIG)
           # =========================================================================
           echo "=== 3. Applying Standalone SUSFS & ZeroMount Patch ==="
           SUSFS_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/susfs_zeromount.patch"
@@ -204,12 +204,93 @@ jobs:
             sed -i 's/\r$//' "$SUSFS_PATH"
             patch -p1 -N --no-backup-if-mismatch < "$SUSFS_PATH" || true
             
-            # Ensure SUSFS & ZeroMount entries in Makefile / Kconfig
             grep -q "susfs.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
             grep -q "zeromount.o" fs/Makefile || echo 'obj-$(CONFIG_ZEROMOUNT) += zeromount.o' >> fs/Makefile
             grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
-            grep -q "kernelsu" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-            echo "SUSFS & ZeroMount Patch applied!"
+            grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+
+            # YAHAN SAARI DEFINITIONS HAIN (FIXED INDENTATION FOR YAML)
+            if ! grep -q "CONFIG_KSU_SUSFS" fs/Kconfig; then
+              cat << 'EOF' >> fs/Kconfig
+
+            config ZEROMOUNT
+            	bool "ZeroMount Path Redirection"
+            	default y
+
+            config KSU_SUSFS
+            	bool "KernelSU SUSFS"
+            	default y
+
+            config KSU_SUSFS_SUS_PATH
+            	bool "SUSFS Path"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_SUS_MOUNT
+            	bool "SUSFS Mount"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_SUS_KSTAT
+            	bool "SUSFS Kstat"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_SUS_KSTAT_REDIRECT
+            	bool "SUSFS kstat redirect"
+            	depends on KSU_SUSFS_SUS_KSTAT
+            	default y
+
+            config KSU_SUSFS_SUS_MAP
+            	bool "SUSFS Map"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_OPEN_REDIRECT
+            	bool "SUSFS Open Redirect"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+            	bool "SUSFS Spoof Cmdline"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_SPOOF_UNAME
+            	bool "SUSFS Spoof Uname"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+            	bool "SUSFS Hide Symbols"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_ENABLE_LOG
+            	bool "SUSFS Logging"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_UNICODE_FILTER
+            	bool "Unicode Filter"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_HIDDEN_NAME
+            	bool "Hidden Name"
+            	depends on KSU_SUSFS_SUS_PATH
+            	default y
+
+            config KSU_SUSFS_HARDENED
+            	bool "Hardened SUSFS"
+            	depends on KSU_SUSFS
+            	default y
+            EOF
+            fi
+            echo "✅ SUSFS & ZeroMount Patched & Verified successfully!"
+          else
+            echo "❌ ERROR: SUSFS Patch file not found!"
+            exit 1
           fi
 
           # =========================================================================
