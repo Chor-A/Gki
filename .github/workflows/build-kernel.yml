@@ -236,50 +236,38 @@ jobs:
           fi
 
           # =========================================================================
-          # 3. SETUP KERNELSU-NEXT (LATEST BRANCH) & APPLY LOCAL 70 PATCH
+          # 3. SETUP KERNELSU-NEXT (LATEST BRANCH) & APPLY COMMUNITY FIXUP
           # =========================================================================
           echo "=== 3. Setting up KernelSU-Next (Latest Branch) ==="
           rm -rf KernelSU-Next drivers/kernelsu
-          # Clone latest main branch without depth limit so commit counting works
+          
+          # Clone absolute latest main branch
           git clone https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           
+          # Extract exact version from the fetched state
           cd KernelSU-Next
-          # Look for the newly generated latest patch first
-          PATCH_70="$GITHUB_WORKSPACE/.github/workflows/patches/70_ksu_safety-kernelsu-next-latest.patch"
-          if [ ! -f "$PATCH_70" ]; then
-            PATCH_70="$GITHUB_WORKSPACE/patches/70_ksu_safety-kernelsu-next-latest.patch"
-          fi
-          # Fallback to the old name just in case you named it the same
-          if [ ! -f "$PATCH_70" ]; then
-            PATCH_70="$GITHUB_WORKSPACE/.github/workflows/patches/70_ksu_safety-kernelsu-next-5.10.patch"
-          fi
-          if [ ! -f "$PATCH_70" ]; then
-            PATCH_70="$GITHUB_WORKSPACE/patches/70_ksu_safety-kernelsu-next-5.10.patch"
-          fi
-
-          if [ -f "$PATCH_70" ]; then
-            echo "Applying local KSU-Next SUSFS compatibility patch 70..."
-            sed -i 's/\r$//' "$PATCH_70"
-            patch -p1 --forward < "$PATCH_70" || echo "Notice: Patch 70 hunk might be skipped or already applied."
-          else
-            echo "❌ ERROR: 70_ksu_safety patch not found!"
-            exit 1
-          fi
-          
-          # Extract version from the latest fetched state
           export KSU_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.5")
           KSU_COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo "1500")
           export KSU_VERSION=$((10000 + KSU_COMMITS))
           cd ..
           
+          # Move to drivers
           mkdir -p drivers/kernelsu
           cp -r KernelSU-Next/kernel/* drivers/kernelsu/
           if [ -d "KernelSU-Next/uapi" ]; then
             cp -r KernelSU-Next/uapi drivers/kernelsu/
           fi
           
-          echo "Hardcoding KSU Version: $KSU_VERSION and Tag: $KSU_TAG into drivers/kernelsu/Kbuild..."
+          echo "Hardcoding KSU Version: $KSU_VERSION and Tag: $KSU_TAG..."
           perl -pi -e 'if ($. == 1) { print "KSU_GIT_VERSION ?= $ENV{KSU_VERSION}\nKSU_VERSION_TAG ?= \"$ENV{KSU_TAG}\"\n" }' drivers/kernelsu/Kbuild
+          
+          echo "=== Applying Community SUSFS Fixup for KSU-Next ==="
+          # Download the ultimate fixup script from the Konoha GKI project
+          curl -sO https://raw.githubusercontent.com/IRedDragonICY/konoha-kernel-gki/main/ksu_susfs_fixup.sh
+          chmod +x ksu_susfs_fixup.sh
+          
+          # Run the fixup script to automatically inject all missing VFS/SUSFS hooks into the new architecture!
+          ./ksu_susfs_fixup.sh ksu-next || true
           
           grep -q "kernelsu" drivers/Makefile || echo 'obj-y += kernelsu/' >> drivers/Makefile
           grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
