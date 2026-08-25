@@ -233,7 +233,7 @@ jobs:
           fi
 
           # =========================================================================
-          # 3. SETUP KERNELSU-NEXT & APPLY KSU-SPECIFIC PATCH
+          # 3. SETUP KERNELSU-NEXT & APPLY KSU-SPECIFIC PATCH 70
           # =========================================================================
           echo "=== 3. Setting up KernelSU-Next ==="
           rm -rf KernelSU-Next drivers/kernelsu
@@ -245,7 +245,7 @@ jobs:
           fi
 
           if [ -f "$PATCH_70" ]; then
-            echo "Applying KSU-Next SUSFS compatibility patch..."
+            echo "Applying local KSU-Next SUSFS compatibility patch 70..."
             sed -i 's/\r$//' "$PATCH_70"
             cd KernelSU-Next
             patch -p1 --forward < "$PATCH_70" || echo "Notice: Patch 70 hunk might be skipped or already applied."
@@ -256,39 +256,27 @@ jobs:
           fi
           
           mkdir -p drivers/kernelsu
+          
+          # Fix missing header files by copying uapi folder
           cp -r KernelSU-Next/kernel/* drivers/kernelsu/
           if [ -d "KernelSU-Next/uapi" ]; then
             cp -r KernelSU-Next/uapi drivers/kernelsu/
           fi
           
-          # AUTOMATIC FIX FOR THE KERNEL_UMOUNT.C PREPROCESSOR ERROR
-          if [ -f "drivers/kernelsu/feature/kernel_umount.c" ]; then
-            python3 -c '
-              path = "drivers/kernelsu/feature/kernel_umount.c"
-              with open(path, "r") as f:
-                  content = f.read()
-              content = content.replace("#ifndef CONFIG_KSU_SUSFS\n    // There are 6 scenarios:", "    // There are 6 scenarios:")
-              content = content.replace("\t\treturn 0;\n\t}\n#endif // #ifndef CONFIG_KSU_SUSFS", "\t\treturn 0;\n\t}")
-              with open(path, "w") as f:
-                  f.write(content)
-            ' || true
-          fi
-          
           grep -q "kernelsu" drivers/Makefile || echo 'obj-y += kernelsu/' >> drivers/Makefile
           grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
-          # FORCE LINK KSU DIRECTLY IN CONFIGS TO PREVENT ANY LLD UNDEFINED ERRORS
           sed -i 's/CONFIG_KSU=m/CONFIG_KSU=y/g' arch/arm64/configs/gki_defconfig || true
           echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_NEXT=y" >> arch/arm64/configs/gki_defconfig
 
           # =========================================================================
-          # 4. APPLY STANDALONE SUSFS + ZEROMOUNT PATCH
+          # 4. APPLY YOUR FIXED SUSFS + ZEROMOUNT PATCH
           # =========================================================================
-          echo "=== 4. Applying Standalone SUSFS & ZeroMount Patch ==="
-          SUSFS_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/susfs_zeromount.patch"
+          echo "=== 4. Applying Fixed Standalone SUSFS & ZeroMount Patch ==="
+          SUSFS_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/susfs_zeromount_fixed.patch"
           if [ ! -f "$SUSFS_PATH" ]; then
-            SUSFS_PATH="$GITHUB_WORKSPACE/patches/susfs_zeromount.patch"
+            SUSFS_PATH="$GITHUB_WORKSPACE/patches/susfs_zeromount_fixed.patch"
           fi
 
           if [ -f "$SUSFS_PATH" ]; then
@@ -378,9 +366,9 @@ jobs:
           	default y
           EOF
             fi
-            echo "✅ SUSFS & ZeroMount Patched & Verified successfully!"
+            echo "✅ Fixed SUSFS & ZeroMount Patched & Verified successfully!"
           else
-            echo "❌ ERROR: SUSFS Patch file not found!"
+            echo "❌ ERROR: susfs_zeromount_fixed.patch file not found!"
             exit 1
           fi
 
