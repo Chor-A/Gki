@@ -169,20 +169,19 @@ jobs:
           +		seq_putc(m, '\n');
           +		return 0;
           +	}
-          +	seq_puts(m, saved_command_line);
+          	seq_puts(m, saved_command_line);
           	seq_putc(m, '\n');
           	return 0;
            }
           diff --git a/fs/proc/bootconfig.c b/fs/proc/bootconfig.c
           --- a/fs/proc/bootconfig.c
           +++ b/fs/proc/bootconfig.c
-          @@ -2,6 +2,8 @@
-           #include <linux/fs.h>
-           #include <linux/init.h>
+          @@ -8,6 +8,8 @@
            #include <linux/proc_fs.h>
            #include <linux/seq_file.h>
-          +#include <linux/slab.h>
+           #include <linux/bootconfig.h>
           +#include <linux/string.h>
+           #include <linux/slab.h>
            
            static char *saved_boot_config;
            
