@@ -177,10 +177,10 @@ jobs:
           fi
 
           # =========================================================================
-          # 4. SETUP KERNELSU-NEXT VIA OFFICIAL SETUP SCRIPT
+          # 4. SETUP KERNELSU-NEXT VIA PERSHOOT DEV-SUSFS SCRIPT
           # =========================================================================
-          echo "=== 4. Setting up KernelSU-Next via official setup.sh ==="
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          echo "=== 4. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
+          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
 
           # Force-enable required KSU configurations
           sed -i 's/CONFIG_KSU=m/CONFIG_KSU=y/g' arch/arm64/configs/gki_defconfig || true
@@ -191,7 +191,23 @@ jobs:
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/gki_defconfig
 
-          echo "✅ Manual NoMount, Official KernelSU-Next, MGLRU & Spoofs applied successfully!"
+          # Enable SUSFS Full Flags
+          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=n" >> arch/arm64/configs/gki_defconfig
+
+          echo "✅ Manual NoMount, pershoot KernelSU-Next, MGLRU & Spoofs applied successfully!"
 
       - name: Build kernel
         run: |
@@ -230,7 +246,7 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built with Official KernelSU-Next Setup, MGLRU, NoMount & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built with pershoot KernelSU-Next (susfs), MGLRU, NoMount & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
           echo "Release $tag completed successfully."
