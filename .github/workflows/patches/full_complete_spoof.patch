@@ -11,7 +11,7 @@
  		seq_printf(m, "Umask:\t%#04o\n", umask);
 --- a/fs/proc/cmdline.c
 +++ b/fs/proc/cmdline.c
-@@ -5,8 +5,30 @@
+@@ -5,8 +5,28 @@
  #include <linux/seq_file.h>
 +#include <linux/slab.h>
 +#include <linux/string.h>
@@ -42,7 +42,7 @@
  }
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -11,10 +11,32 @@
+@@ -11,10 +11,31 @@
  #include <linux/slab.h>
 +#include <linux/string.h>
  
