@@ -177,17 +177,15 @@ jobs:
           fi
 
           # =========================================================================
-          # 4. SETUP SUSFS SOURCE CODE (Missing piece added here)
+          # 4. SETUP SUSFS SOURCE CODE & PATCH
           # =========================================================================
           echo "=== 4. Integrating SUSFS into Kernel ==="
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
+          git clone --depth=1 -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
           
-          # Copying susfs source files
-          cp ../susfs4ksu/kernel_patches/fs/* fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/* include/linux/
+          cp -r ../susfs4ksu/kernel_patches/fs/* fs/
+          cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           
-          # Applying susfs kernel patches for 5.10
-          patch -p1 < ../susfs4ksu/kernel_patches/50_recipe_for_5.10.patch || echo "Warning: SUSFS patch issue or already applied"
+          patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue or already applied"
 
           # =========================================================================
           # 5. SETUP KERNELSU-NEXT VIA PERSHOOT DEV-SUSFS SCRIPT
@@ -220,7 +218,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=n" >> arch/arm64/configs/gki_defconfig
 
-          echo "✅ Manual NoMount, SUSFS Source, pershoot KernelSU-Next, MGLRU & Spoofs applied successfully!"
+          echo "✅ Manual NoMount, SUSFS Source & Patch, pershoot KernelSU-Next, MGLRU & Spoofs applied successfully!"
 
       - name: Build kernel
         run: |
