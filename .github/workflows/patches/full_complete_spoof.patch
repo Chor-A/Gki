@@ -1,6 +1,8 @@
 --- a/fs/proc/array.c
 +++ b/fs/proc/array.c
-@@ -179,6 +179,9 @@
+@@ -178,8 +178,11 @@
+ 	if (p->files)
+ 		max_fds = files_fdtable(p->files)->max_fds;
  	task_unlock(p);
  	rcu_read_unlock();
  
@@ -12,8 +14,7 @@
  	seq_puts(m, "State:\t");
 --- a/fs/proc/cmdline.c
 +++ b/fs/proc/cmdline.c
-@@ -2,11 +2,31 @@
- #include <linux/fs.h>
+@@ -3,9 +3,29 @@
  #include <linux/init.h>
  #include <linux/proc_fs.h>
  #include <linux/seq_file.h>
@@ -43,15 +44,13 @@
  	seq_puts(m, saved_command_line);
  	seq_putc(m, '\n');
  	return 0;
- }
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -8,12 +8,35 @@
- #include <linux/proc_fs.h>
+@@ -9,12 +9,31 @@
  #include <linux/seq_file.h>
  #include <linux/bootconfig.h>
+ #include <linux/slab.h>
 +#include <linux/string.h>
-+#include <linux/slab.h>
  
  static char *saved_boot_config;
  
@@ -80,4 +79,3 @@
  	if (saved_boot_config)
  		seq_puts(m, saved_boot_config);
  	return 0;
- }
