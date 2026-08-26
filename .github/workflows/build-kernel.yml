@@ -126,14 +126,25 @@ jobs:
           
           git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
 
-      - name: Apply Spoofs, Manual NoMount, MGLRU, SUSFS & KernelSU-Next
+      - name: Apply SUSFS, Spoofs, Manual NoMount, MGLRU & KernelSU-Next
         run: |
           cd work/common
 
           # =========================================================================
-          # 1. APPLY FULL COMPLETE SPOOF PATCH
+          # 1. SETUP SUSFS SOURCE CODE & PATCH (AB SABSE PEHLE YE HOGA)
           # =========================================================================
-          echo "=== 1. Applying Full Complete Spoof Patch ==="
+          echo "=== 1. Integrating SUSFS into Kernel ==="
+          git clone --depth=1 -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
+          
+          cp -r ../susfs4ksu/kernel_patches/fs/* fs/
+          cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
+          
+          patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue"
+
+          # =========================================================================
+          # 2. APPLY FULL COMPLETE SPOOF PATCH
+          # =========================================================================
+          echo "=== 2. Applying Full Complete Spoof Patch ==="
           SPOOF_PATCH="$GITHUB_WORKSPACE/.github/workflows/patches/full_complete_spoof.patch"
           if [ ! -f "$SPOOF_PATCH" ]; then
             SPOOF_PATCH="$GITHUB_WORKSPACE/patches/full_complete_spoof.patch"
@@ -141,7 +152,7 @@ jobs:
 
           if [ -f "$SPOOF_PATCH" ]; then
             sed -i 's/\r$//' "$SPOOF_PATCH"
-            patch -p1 -N --no-backup-if-mismatch < "$SPOOF_PATCH" || echo "Spoof patch already applied"
+            patch -p1 -N --no-backup-if-mismatch < "$SPOOF_PATCH" || echo "Spoof patch partially skipped (already covered by SUSFS)"
             echo "✅ Spoofs dynamically injected."
           else
             echo "❌ ERROR: full_complete_spoof.patch not found!"
@@ -149,9 +160,9 @@ jobs:
           fi
 
           # =========================================================================
-          # 2. SETUP NOMOUNT (MANUAL INTEGRATION - DEV BRANCH)
+          # 3. SETUP NOMOUNT (MANUAL INTEGRATION - DEV BRANCH)
           # =========================================================================
-          echo "=== 2. Setting up NoMount (Manual Method) ==="
+          echo "=== 3. Setting up NoMount (Manual Method) ==="
           git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
           
           mkdir -p fs/nomount
@@ -162,9 +173,9 @@ jobs:
           echo "CONFIG_NOMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
           # =========================================================================
-          # 3. APPLY MGLRU PATCH
+          # 4. APPLY MGLRU PATCH
           # =========================================================================
-          echo "=== 3. Applying MGLRU Patch ==="
+          echo "=== 4. Applying MGLRU Patch ==="
           MGLRU_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/mglru.patch"
           if [ ! -f "$MGLRU_PATH" ]; then
             MGLRU_PATH="$GITHUB_WORKSPACE/patches/mglru.patch"
@@ -177,17 +188,9 @@ jobs:
           fi
 
           # =========================================================================
-          # 4. INTEGRATE SUSFS SOURCE & PATCH, THEN KERNELSU-NEXT
+          # 5. SETUP KERNELSU-NEXT VIA PERSHOOT DEV-SUSFS SCRIPT
           # =========================================================================
-          echo "=== 4. Integrating SUSFS and KernelSU-Next ==="
-          git clone --depth=1 -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
-          
-          cp -r ../susfs4ksu/kernel_patches/fs/* fs/
-          cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
-          
-          patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue or already applied"
-
-          # Run pershoot setup script for KernelSU-Next (dev-susfs)
+          echo "=== 5. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
 
           # Force-enable required KSU configurations
@@ -215,7 +218,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=n" >> arch/arm64/configs/gki_defconfig
 
-          echo "✅ Manual NoMount, SUSFS, pershoot KernelSU-Next, MGLRU & Spoofs applied successfully!"
+          echo "✅ SUSFS, Spoofs, Manual NoMount, MGLRU & pershoot KernelSU-Next applied successfully!"
 
       - name: Build kernel
         run: |
