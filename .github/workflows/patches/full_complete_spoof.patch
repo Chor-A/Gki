@@ -1,9 +1,6 @@
-cat << 'EOF' > spoof.patch
 --- a/fs/proc/array.c
 +++ b/fs/proc/array.c
-@@ -159,8 +159,11 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
- 	if (p->files)
- 		max_fds = files_fdtable(p->files)->max_fds;
+@@ -163,5 +163,8 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
  	task_unlock(p);
  	rcu_read_unlock();
  
@@ -12,13 +9,9 @@ cat << 'EOF' > spoof.patch
 +
  	if (umask >= 0)
  		seq_printf(m, "Umask:\t%#04o\n", umask);
- 	seq_puts(m, "State:\t");
 --- a/fs/proc/cmdline.c
 +++ b/fs/proc/cmdline.c
-@@ -2,11 +2,31 @@
- #include <linux/fs.h>
- #include <linux/init.h>
- #include <linux/proc_fs.h>
+@@ -5,8 +5,30 @@
  #include <linux/seq_file.h>
 +#include <linux/slab.h>
 +#include <linux/string.h>
@@ -49,10 +42,7 @@ cat << 'EOF' > spoof.patch
  }
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -8,13 +8,32 @@
- #include <linux/proc_fs.h>
- #include <linux/seq_file.h>
- #include <linux/bootconfig.h>
+@@ -11,10 +11,32 @@
  #include <linux/slab.h>
 +#include <linux/string.h>
  
@@ -84,4 +74,3 @@ cat << 'EOF' > spoof.patch
  		seq_puts(m, saved_boot_config);
  	return 0;
  }
-EOF
