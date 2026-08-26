@@ -131,22 +131,22 @@ jobs:
           cd work/common
 
           # =========================================================================
-          # 1. APPLY FULL COMPLETE SPOOF (VIA PERL INJECTION)
+          # 1. APPLY FULL COMPLETE SPOOF PATCH
           # =========================================================================
           echo "=== 1. Applying Full Complete Spoof Patch ==="
-          
-          # Spoof array.c (Hide root PID)
-          perl -0777 -pi -e 's/(rcu_read_unlock\(\);\n\n\s*if \(umask >= 0\))/\n\tif (current_uid().val >= 10000)\n\t\ttpid = 0;\n$1/s' fs/proc/array.c
-          
-          # Spoof cmdline.c
-          perl -0777 -pi -e 's/(static int cmdline_proc_show.*?)\{\n\s*seq_puts\(m, saved_command_line\);/$1{\n\tchar *p;\n\tchar *buf = kstrdup(saved_command_line, GFP_KERNEL);\n\tif (buf) {\n\t\tif ((p = strstr(buf, "androidboot.verifiedbootstate=orange"))) memcpy(p + 30, "green ", 6);\n\t\tif ((p = strstr(buf, "androidboot.verifiedbootstate=yellow"))) memcpy(p + 30, "green ", 6);\n\t\tif ((p = strstr(buf, "androidboot.vbmeta.device_state=unlocked"))) memcpy(p + 32, "locked  ", 8);\n\t\tif ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);\n\t\tif ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);\n\t\tif ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);\n\t\tif ((p = strstr(buf, "buildvariant=eng "))) memcpy(p + 13, "user", 4);\n\t\tif ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);\n\t\tif ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);\n\t\tif ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);\n\t\tseq_puts(m, buf);\n\t\tkfree(buf);\n\t\tseq_putc(m, '\''\\n'\'');\n\t\treturn 0;\n\t}\n\tseq_puts(m, saved_command_line);/s' fs/proc/cmdline.c
-          perl -pi -e 's/#include <linux\/seq_file\.h>/#include <linux\/seq_file.h>\n#include <linux\/slab.h>\n#include <linux\/string.h>/g' fs/proc/cmdline.c
+          SPOOF_PATCH="$GITHUB_WORKSPACE/.github/workflows/patches/full_complete_spoof.patch"
+          if [ ! -f "$SPOOF_PATCH" ]; then
+            SPOOF_PATCH="$GITHUB_WORKSPACE/patches/full_complete_spoof.patch"
+          fi
 
-          # Spoof bootconfig.c
-          perl -0777 -pi -e 's/(static int boot_config_proc_show.*?)\{\n\s*if \(saved_boot_config\)/$1{\n\tchar *p;\n\tchar *buf = kstrdup(saved_boot_config, GFP_KERNEL);\n\tif (buf) {\n\t\tif ((p = strstr(buf, "androidboot.verifiedbootstate=orange"))) memcpy(p + 30, "green ", 6);\n\t\tif ((p = strstr(buf, "androidboot.verifiedbootstate=yellow"))) memcpy(p + 30, "green ", 6);\n\t\tif ((p = strstr(buf, "androidboot.vbmeta.device_state=unlocked"))) memcpy(p + 32, "locked  ", 8);\n\t\tif ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);\n\t\tif ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);\n\t\tif ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);\n\t\tif ((p = strstr(buf, "buildvariant=eng "))) memcpy(p + 13, "user", 4);\n\t\tif ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);\n\t\tif ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);\n\t\tif ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);\n\t\tif ((p = strstr(buf, "\\"orange\\""))) memcpy(p + 1, "green\\" ", 7);\n\t\tif ((p = strstr(buf, "\\"yellow\\""))) memcpy(p + 1, "green\\" ", 7);\n\t\tif ((p = strstr(buf, "\\"unlocked\\""))) memcpy(p + 1, "locked\\"  ", 9);\n\t\tseq_puts(m, buf);\n\t\tkfree(buf);\n\t\treturn 0;\n\t}\n\tif (saved_boot_config)/s' fs/proc/bootconfig.c
-          perl -pi -e 's/#include <linux\/bootconfig\.h>/#include <linux\/bootconfig.h>\n#include <linux\/string.h>\n#include <linux\/slab.h>/g' fs/proc/bootconfig.c
-          
-          echo "✅ Spoofs dynamically injected."
+          if [ -f "$SPOOF_PATCH" ]; then
+            sed -i 's/\r$//' "$SPOOF_PATCH"
+            patch -p1 -N --no-backup-if-mismatch < "$SPOOF_PATCH" || echo "Spoof patch already applied"
+            echo "✅ Spoofs dynamically injected."
+          else
+            echo "❌ ERROR: full_complete_spoof.patch not found!"
+            exit 1
+          fi
 
           # =========================================================================
           # 2. SETUP NOMOUNT (MANUAL INTEGRATION - DEV BRANCH)
