@@ -126,7 +126,7 @@ jobs:
           
           git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
 
-      - name: Apply Spoofs, Manual NoMount, MGLRU & KernelSU-Next
+      - name: Apply Spoofs, Manual NoMount, MGLRU, SUSFS & KernelSU-Next
         run: |
           cd work/common
 
@@ -177,9 +177,17 @@ jobs:
           fi
 
           # =========================================================================
-          # 4. SETUP KERNELSU-NEXT VIA PERSHOOT DEV-SUSFS SCRIPT (Handles SUSFS automatically)
+          # 4. INTEGRATE SUSFS SOURCE & PATCH, THEN KERNELSU-NEXT
           # =========================================================================
-          echo "=== 4. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
+          echo "=== 4. Integrating SUSFS and KernelSU-Next ==="
+          git clone --depth=1 -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
+          
+          cp -r ../susfs4ksu/kernel_patches/fs/* fs/
+          cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
+          
+          patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue or already applied"
+
+          # Run pershoot setup script for KernelSU-Next (dev-susfs)
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
 
           # Force-enable required KSU configurations
@@ -207,7 +215,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=n" >> arch/arm64/configs/gki_defconfig
 
-          echo "✅ Manual NoMount, pershoot KernelSU-Next (with automatic SUSFS), MGLRU & Spoofs applied successfully!"
+          echo "✅ Manual NoMount, SUSFS, pershoot KernelSU-Next, MGLRU & Spoofs applied successfully!"
 
       - name: Build kernel
         run: |
