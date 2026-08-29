@@ -45,12 +45,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout Kernel
+      - name: Checkout Kernel (cross-repo to Templar source)
         uses: actions/checkout@v5
         with:
-          repository: ${{ github.repository }}
+          repository: Chor-A/Templar-Kernel-GKI-5.10
           ref: Linux7-Staging
-          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT }}
           fetch-depth: 1
           filter: blob:none
 
@@ -216,7 +216,6 @@ jobs:
           echo "HEAD..stable count: $(git rev-list --count HEAD..stable/linux-5.10.y 2>&1 || echo 0)"
           echo "stable..HEAD count: $(git rev-list --count stable/linux-5.10.y..HEAD 2>&1 || echo 0)"
           echo "Shallow: $(test -f .git/shallow && echo "yes $(wc -l < .git/shallow) lines" || echo "full")"
-          # checkout faster: only stable + tree
 
       - name: Check if new stable commits to merge
         if: inputs.revert_commit == '' && inputs.revert_no_force_commit == ''
@@ -315,7 +314,7 @@ jobs:
             resp=$(curl -s https://openrouter.ai/api/v1/chat/completions \
               -H "Authorization: Bearer $OPENROUTER_API_KEY" \
               -H "Content-Type: application/json" \
-              -H "HTTP-Referer: https://github.com/Chor-A/Templar-Kernel-GKI-5.10" \
+              -H "HTTP-Referer: https://github.com/Chor-A/Gki" \
               -d @- <<EOF
           {
             "model": "minimax/minimax-m3:free",
@@ -412,7 +411,7 @@ jobs:
             git diff --name-only --diff-filter=U | head -n 20 || true
             exit 1
           fi
-          git push origin Linux7-Staging || git push --force-with-lease origin Linux7-Staging
+          git push origin HEAD:Linux7-Staging || git push --force-with-lease origin HEAD:Linux7-Staging
           echo "pushed $(git rev-parse --short HEAD)"
 
       - name: Summary
