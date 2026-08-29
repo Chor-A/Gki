@@ -197,7 +197,7 @@ jobs:
           echo "✅ Applied successfully!"
           
           - name: Auto-Fix Upstream 5.10 Backport Bugs (Self-Healing)
-          run: |
+            run: |
           cd work/common
           echo "=== 1. Auto-patching 5.10 Timer API Bugs ==="
           # Pure drivers folder mein jahan bhi timer_delete_sync hoga, ye usko automatically del_timer_sync bana dega
