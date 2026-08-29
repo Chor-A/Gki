@@ -24,7 +24,7 @@ on:
         required: false
         default: ""
       ai_extra_prompt:
-        description: "additional AI prompt for proper backport"
+        description: "additional AI prompt for proper backport (e.g. adapt timer_delete_sync to del_timer_sync for 5.10)"
         required: false
         default: ""
       dry_run:
@@ -50,7 +50,7 @@ jobs:
         with:
           repository: ${{ github.repository }}
           ref: Linux7-Staging
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 1
           filter: blob:none
 
@@ -69,6 +69,7 @@ jobs:
           commit="${{ inputs.revert_commit }}"
           echo "Reverting to $commit with depth 1"
           git fetch --depth=1 origin "$commit" 2>&1 | tail -n 5 || git fetch --depth=1 origin Linux7-Staging 2>&1 | tail -n 5 || true
+          # try to checkout the commit directly (may need full fetch of that object)
           git fetch --depth=1 origin "$commit" 2>&1 | tail -n 5 || true
           git checkout --force "$commit" 2>&1 | tail -n 5 || git reset --hard "$commit" 2>&1 | tail -n 5 || { echo "::error::cannot checkout $commit"; exit 1; }
           git log --oneline -3 | head
@@ -86,6 +87,7 @@ jobs:
           set -o pipefail
           commit="${{ inputs.revert_no_force_commit }}"
           echo "Creating revert commit for $commit (no force, preserves history)"
+          # cheap fetch needs commit + parents for revert to compute diff (depth 2, not 1)
           git fetch --depth=2 origin "$commit" 2>&1 | tail -n 5 || true
           if ! git cat-file -e "$commit^{commit}" 2>/dev/null; then
             echo "Not on origin, trying stable remotes (cheap, depth 2)..."
@@ -94,6 +96,7 @@ jobs:
             git fetch --depth=2 stable "$commit" 2>&1 | tail -n 5 || true
             git fetch --depth=2 stable-mirror "$commit" 2>&1 | tail -n 5 || true
           fi
+          # ensure parent is present for revert (depth 2 should have it, but verify)
           if ! git cat-file -e "$commit^" 2>/dev/null; then
             echo "Parent not fetched, deepening by 1..."
             git fetch --deepen=1 origin "$commit" 2>&1 | tail -n 5 || true
@@ -103,6 +106,7 @@ jobs:
           git rev-parse --verify "$commit^{commit}" >/dev/null 2>&1 || { echo "::error::cannot find commit $commit (try full SHA, not short)"; exit 1; }
           git log --oneline -3 HEAD | head
           echo "Target: $(git log --oneline -1 "$commit" | head)"
+          # detect merge commit (more than one parent)
           parents=$(git rev-list --parents -n 1 "$commit" | wc -w)
           if [ "$parents" -gt 2 ]; then
             echo "Merge commit detected ($((parents-1)) parents), using -m 1"
@@ -110,6 +114,7 @@ jobs:
           else
             git revert --no-edit "$commit" 2>&1 | tee /tmp/revert.log
           fi
+          # if revert had conflicts, abort and fail clearly (don't silently push no-op)
           if grep -q "CONFLICT\|error: could not revert" /tmp/revert.log; then
             echo "::error::revert conflict for $commit, see log above"
             git revert --abort 2>/dev/null || true
@@ -125,61 +130,93 @@ jobs:
           git push origin HEAD:Linux7-Staging 2>&1 | tail -n 20
           echo "reverted $commit via revert commit $(git rev-parse --short HEAD) (no force)"
 
-      - name: Add remotes and fetch deterministic
+      - name: Add remotes and fetch deterministic (actual needed history)
         if: inputs.revert_commit == '' && inputs.revert_no_force_commit == ''
         run: |
           max_depth="${{ inputs.max_count || 10000 }}"
           init_depth=100
           step=500
+          echo "max_depth=$max_depth init=$init_depth step=$step (max_count from input)"
           git remote add stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git || git remote set-url stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
           git remote add stable-mirror https://github.com/gregkh/linux.git || git remote set-url stable-mirror https://github.com/gregkh/linux.git
           echo "Fetching tree shallow init (fast)..."
           git fetch --depth="$init_depth" --filter=blob:none origin Linux7-Staging
-          echo "Fetching stable linux-5.10.y shallow init only..."
+          echo "Fetching stable linux-5.10.y shallow init only (primary: kernel.org, fallback: github mirror lagging)..."
+          # primary kernel.org with 3 retries, fallback to mirror only if primary fails (mirror is lagging)
           _fetched=false
           for i in 1 2 3; do
             git fetch --depth="$init_depth" --filter=blob:none stable linux-5.10.y 2>&1 | tail -n 5; _ec=${PIPESTATUS[0]}
             if [ $_ec -eq 0 ] && git rev-parse --verify refs/remotes/stable/linux-5.10.y >/dev/null 2>&1; then _fetched=true; break; fi
+            echo "kernel.org attempt $i failed (ec=$_ec), retrying..."
             sleep 5
           done
           if [ "$_fetched" != "true" ]; then
+            echo "::warning::kernel.org failed, falling back to github mirror https://github.com/gregkh/linux.git (lagging)"
             git fetch --depth="$init_depth" --filter=blob:none stable-mirror linux-5.10.y:refs/remotes/stable/linux-5.10.y 2>&1 | tail -n 5 || true
           fi
           cur="$init_depth"
+          # deterministic: deepen until merge-base found, with retry for flaky kernel.org + mirror fallback
           while ! git merge-base HEAD stable/linux-5.10.y >/dev/null 2>&1; do
             if [ "$cur" -ge "$max_depth" ]; then
+              echo "::warning::no merge-base within max_depth $max_depth"
+              # fallback: fetch full history with blob filter (still shallow on blobs, not full 3GB)
+              echo "Falling back to --unshallow --filter=blob:none for correct merge-base"
               git fetch --unshallow --filter=blob:none origin Linux7-Staging 2>&1 | tail -n 5 || true
+              # try kernel.org first, then mirror fallback (lagging)
               git fetch --unshallow --filter=blob:none stable linux-5.10.y 2>&1 | tail -n 5; _ec=${PIPESTATUS[0]}
               if [ $_ec -ne 0 ]; then
+                echo "::warning::kernel.org unshallow failed (ec=$_ec), trying mirror fallback"
                 git fetch --unshallow --filter=blob:none stable-mirror linux-5.10.y:refs/remotes/stable/linux-5.10.y 2>&1 | tail -n 5 || true
               fi
               break
             fi
             cur=$((cur + step))
             if [ "$cur" -gt "$max_depth" ]; then cur="$max_depth"; fi
+            echo "No merge-base yet, deepening to $cur..."
             git fetch --deepen="$step" origin Linux7-Staging 2>&1 | tail -n 5 || true
+            # deepen stable: 3 retries on kernel.org, then mirror fallback
             _deep_ok=false
             for i in 1 2 3; do
               git fetch --deepen="$step" stable linux-5.10.y 2>&1 | tail -n 5; _ec=${PIPESTATUS[0]}
               if [ $_ec -eq 0 ]; then _deep_ok=true; break; fi
+              echo "stable fetch attempt $i failed (ec=$_ec), retrying..."
               sleep 5
             done
             if [ "$_deep_ok" != "true" ]; then
+              echo "::warning::kernel.org deepen failed, trying mirror fallback"
               git fetch --deepen="$step" stable-mirror linux-5.10.y:refs/remotes/stable/linux-5.10.y 2>&1 | tail -n 5 || true
             fi
+            echo "Shallow lines: $(wc -l < .git/shallow 2>/dev/null || echo 0)"
           done
+          # for merge strategy, ensure we have enough history to push without bc1d99ba missing object
+          # if strategy=merge and shallow, unshallow with filter to avoid "did not receive expected object"
           if [ "${{ inputs.strategy || 'merge' }}" = "merge" ] && [ -f .git/shallow ]; then
+            echo "Merge strategy with shallow may fail push (bc1d99ba), unshallowing with blob filter for deterministic push..."
             git fetch --unshallow --filter=blob:none origin Linux7-Staging 2>&1 | tail -n 5 || true
+            # stable unshallow with retries + mirror fallback
             _unshallow_ok=false
             for i in 1 2 3; do
               git fetch --unshallow --filter=blob:none stable linux-5.10.y 2>&1 | tail -n 5; _ec=${PIPESTATUS[0]}
               if [ $_ec -eq 0 ]; then _unshallow_ok=true; break; fi
+              echo "stable unshallow attempt $i failed (ec=$_ec), retrying..."
               sleep 5
             done
             if [ "$_unshallow_ok" != "true" ]; then
+              echo "::warning::kernel.org unshallow failed, trying mirror fallback"
               git fetch --unshallow --filter=blob:none stable-mirror linux-5.10.y:refs/remotes/stable/linux-5.10.y 2>&1 | tail -n 5 || true
             fi
           fi
+          echo "Heads:"
+          git log --oneline -3 HEAD
+          git log --oneline -3 stable/linux-5.10.y
+          echo "Merge-base:"
+          git merge-base HEAD stable/linux-5.10.y || echo "no merge-base (fallback)"
+          echo "Needed depth: $cur / $max_depth"
+          echo "Ahead/behind (deterministic):"
+          echo "HEAD..stable count: $(git rev-list --count HEAD..stable/linux-5.10.y 2>&1 || echo 0)"
+          echo "stable..HEAD count: $(git rev-list --count stable/linux-5.10.y..HEAD 2>&1 || echo 0)"
+          echo "Shallow: $(test -f .git/shallow && echo "yes $(wc -l < .git/shallow) lines" || echo "full")"
+          # checkout faster: only stable + tree
 
       - name: Check if new stable commits to merge
         if: inputs.revert_commit == '' && inputs.revert_no_force_commit == ''
@@ -192,6 +229,7 @@ jobs:
             echo "::notice::No new stable commits - skipping merge"
           else
             echo "has_new=true" >> $GITHUB_OUTPUT
+            echo "Found $new new stable commits to merge"
           fi
 
       - name: Attempt merge/cherry-pick
@@ -200,31 +238,42 @@ jobs:
         run: |
           set +e
           strategy="${{ inputs.strategy || 'cherry-pick' }}"
+          echo "strategy=$strategy"
           if [ "$strategy" = "merge" ]; then
             git merge --no-ff stable/linux-5.10.y -m "Merge linux-5.10.y $(git rev-parse --short stable/linux-5.10.y) into Linux7-Staging" 2>&1 | tee /tmp/merge.log
             ec=${PIPESTATUS[0]}
           else
+            # cherry-pick linearizes: 5.10.266 + reverts etc. Use -m 1 for merges
+            # Find merge-base if exists, else cherry-pick full range
             base=$(git merge-base HEAD stable/linux-5.10.y 2>/dev/null || echo "")
             if [ -n "$base" ]; then
+              echo "Cherry-picking $base..stable/linux-5.10.y"
               git cherry-pick -m 1 "$base"..stable/linux-5.10.y 2>&1 | tee /tmp/merge.log
               ec=${PIPESTATUS[0]}
             else
+              # no base within shallow depth -> try direct diff as patch (squash-like)
+              echo "No merge-base in shallow window, falling back to squash diff"
               git diff HEAD..stable/linux-5.10.y > /tmp/stable.diff
               git apply --3way /tmp/stable.diff 2>&1 | tee /tmp/merge.log || true
               ec=1
             fi
           fi
+          cat /tmp/merge.log
           if grep -q "CONFLICT" /tmp/merge.log || git diff --name-only --diff-filter=U | grep -q .; then
             echo "conflict=true" >> $GITHUB_OUTPUT
+            echo "HAS_CONFLICT"
+            git status | head -n 50
           else
             if [ $ec -eq 0 ]; then
               echo "conflict=false" >> $GITHUB_OUTPUT
+              echo "CLEAN"
             else
               echo "conflict=true" >> $GITHUB_OUTPUT
+              echo "FAILED with ec=$ec"
             fi
           fi
 
-      - name: Auto-resolve conflicts via OpenRouter
+      - name: Auto-resolve conflicts via OpenRouter (free)
         if: inputs.revert_commit == '' && inputs.revert_no_force_commit == '' && steps.check.outputs.has_new == 'true' && steps.merge.outputs.conflict == 'true'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -235,26 +284,34 @@ jobs:
             git cherry-pick --abort 2>/dev/null || git merge --abort 2>/dev/null || true
             exit 1
           fi
+          # install jq if needed
           sudo apt-get update -qq && sudo apt-get install -y jq || true
           for f in $(git diff --name-only --diff-filter=U); do
+            echo "=== Resolving $f ==="
+            # Makefile: never use LLM (it corrupts $(build)=scripts -> scripts/scripts) - take stable directly
             if [ "$f" = "Makefile" ]; then
+              echo "Makefile conflict - taking stable/theirs directly to avoid LLM corruption"
               git checkout --theirs "$f" || true
               git add "$f"
               continue
             fi
+            # skip binary
             if file "$f" | grep -q "binary"; then
+              echo "skip binary $f"
               git checkout --theirs "$f" || true
               git add "$f"
               continue
             fi
             content=$(cat "$f")
+            # limit size to 120k chars to fit context - use bash substring to avoid Broken pipe from echo|head
             content_trunc=${content:0:120000}
             extra="${{ inputs.ai_extra_prompt }}"
             if [ -n "$extra" ]; then
-              prompt="You are a kernel backport resolver. $extra FOCUS ON FOLLOWING STABLE (stable/linux-5.10.y). Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>> in this file. For version bumps (SUBLEVEL) take higher (stable). Remove markers, return ONLY file content, no markdown.\n\nFile: $f\nContent:\n$content_trunc"
+              prompt="You are a kernel backport resolver. $extra FOCUS ON FOLLOWING STABLE (stable/linux-5.10.y) but do a proper backport for android12-5.10 - adapt APIs if needed (e.g. timer_delete_sync -> del_timer_sync, dmaengine_terminate_sync -> dmaengine_terminate_all with sync ordering), keep sync semantics, don't just take stable verbatim because it fits. Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>> in this file. For version bumps (SUBLEVEL) take higher (stable). Remove markers, return ONLY file content, no markdown, no explanation.\n\nFile: $f\nContent:\n$content_trunc"
             else
-              prompt="You are a kernel merge resolver. FOCUS ON FOLLOWING STABLE (stable/linux-5.10.y) - ALWAYS prefer stable/theirs side. Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>> in this file. For version bumps (SUBLEVEL) take higher (stable). Remove markers, return ONLY file content, no markdown.\n\nFile: $f\nContent:\n$content_trunc"
+              prompt="You are a kernel merge resolver. FOCUS ON FOLLOWING STABLE (stable/linux-5.10.y) - ALWAYS prefer stable/theirs side. Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>> in this file. For version bumps (SUBLEVEL) take higher (stable). For code, ALWAYS take stable side if it adds safety checks (e.g. width>4096, skb_probe_transport_header). Remove markers, return ONLY file content, no markdown, no explanation.\n\nFile: $f\nContent:\n$content_trunc"
             fi
+            # Use minimax/m3 free primary, fallback to openrouter/free - safer prompt with system role
             resp=$(curl -s https://openrouter.ai/api/v1/chat/completions \
               -H "Authorization: Bearer $OPENROUTER_API_KEY" \
               -H "Content-Type: application/json" \
@@ -269,35 +326,48 @@ jobs:
           }
           EOF
             )
+            printf "%s\n" "${resp:0:2000}"
+            # extract content, handle errors
             resolved=$(printf "%s" "$resp" | jq -r '.choices[0].message.content // empty' || true)
             if [ -z "$resolved" ] || [ "$resolved" = "null" ]; then
+              echo "minimax/m3 returned empty, trying fallback openrouter/free"
               resp2=$(curl -s https://openrouter.ai/api/v1/chat/completions \
                 -H "Authorization: Bearer $OPENROUTER_API_KEY" -H "Content-Type: application/json" \
                 -d "{\"model\":\"openrouter/free\",\"messages\":[{\"role\":\"system\",\"content\":\"You ONLY resolve conflict markers.\"},{\"role\":\"user\",\"content\":$(jq -Rs . <<<"$prompt")}],\"temperature\":0.1}")
               resolved=$(echo "$resp2" | jq -r '.choices[0].message.content // empty')
             fi
             if [ -z "$resolved" ] || echo "$resolved" | grep -q "^<<<<<<< "; then
+              echo "::warning::LLM failed to resolve $f cleanly, keeping markers"
+              # fallback: take theirs (stable) for these known files
               if echo "$f" | grep -qE "Makefile|amdgpu_uvd.c|af_packet.c"; then
                 if grep -q "SUBLEVEL" "$f"; then
                   sed -i '/<<<<<<< HEAD/d;/=======/d;/>>>>>>>/d' "$f"
+                  # ensure SUBLEVEL 266 wins
                   sed -i 's/SUBLEVEL = 265/SUBLEVEL = 266/' "$f" || true
                 else
                   git checkout --theirs "$f" || true
                 fi
               fi
             else
+              # remove possible markdown fences
               echo "$resolved" | sed -e 's/^```.*//g' -e 's/^```//g' > "$f.tmp"
+              # if file is smaller than 10 chars, ignore
               if [ $(wc -c < "$f.tmp") -gt 50 ]; then
                 mv "$f.tmp" "$f"
               else
+                echo "resolved too small, keeping original"
                 rm -f "$f.tmp"
               fi
             fi
+            # verify no markers remain - check start of line, not printk
             if grep -q "^<<<<<<< " "$f"; then
+              echo "Still has markers, manual fallback to --theirs (stable)"
               git checkout --theirs "$f" || true
             fi
             git add "$f"
+            echo "Resolved $f"
           done
+          # complete cherry-pick/merge - use pipefail to get real exit code
           set -o pipefail
           if git cherry-pick --continue --no-edit 2>&1 | tee /tmp/continue.log; then
             echo "cherry-pick continue ok"
@@ -306,27 +376,48 @@ jobs:
           elif git merge --continue 2>&1 | tee /tmp/merge_continue.log; then
             echo "merge continue ok"
           else
+            echo "Trying final commit"
             git commit --no-edit 2>&1 | tee /tmp/commit2.log || true
           fi
           set +o pipefail
+          git status | head -n 30
+          git log --oneline -5 | head
 
       - name: Push
         if: inputs.revert_commit == '' && inputs.revert_no_force_commit == '' && steps.check.outputs.has_new == 'true' && (steps.merge.outputs.conflict == 'true' || steps.merge.outputs.conflict == 'false')
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "dry_run, not pushing"
+            git log --oneline -10 | head
+            git diff --stat HEAD~1..HEAD 2>&1 | head -n 50 || true
             exit 0
           fi
+          # verify no markers - check real unmerged files and conflict markers
           if git ls-files --unmerged | grep -q .; then
             echo "::error::still has unmerged files"
+            git ls-files --unmerged | head -n 20
+            git status | head -n 30
             exit 1
           fi
+          # check for actual conflict markers (not printk) - use git diff check
           if git diff --check 2>&1 | grep -q "conflict"; then
             echo "::error::still has conflict markers via diff --check"
+            git diff --check 2>&1 | head -n 50
             exit 1
           fi
           if grep -rn "^<<<<<<< " --include="*.c" --include="*.h" --include="Makefile" . 2>/dev/null > /tmp/markers.log 2>&1; then
             echo "::error::still has conflict markers"
+            cat /tmp/markers.log | head -n 50
+            # show which files
+            git diff --name-only --diff-filter=U | head -n 20 || true
             exit 1
           fi
           git push origin Linux7-Staging || git push --force-with-lease origin Linux7-Staging
+          echo "pushed $(git rev-parse --short HEAD)"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "Head: $(git rev-parse --short HEAD)"
+          echo "stable: $(git rev-parse --short stable/linux-5.10.y)"
+          echo "Diff files: $(git diff --name-only HEAD stable/linux-5.10.y 2>&1 | wc -l || echo 0)"
