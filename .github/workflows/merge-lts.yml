@@ -76,7 +76,7 @@ jobs:
           echo "reverted to $(git rev-parse --short HEAD)"
 
       - name: Revert commit (create revert commit, no force, preserves history)
-        if: inputs.revert_commit == '' && inputs.revert_no_force_commit != ''
+        if: inputs.revert_commit == '' && inputs.revert_no_force_commit == ''
         run: |
           set -e
           set -o pipefail
@@ -220,14 +220,14 @@ jobs:
             fi
           fi
 
-      - name: Auto-resolve conflicts via Google Gemini
+      - name: Auto-resolve conflicts via Google Gemini 3.7 Flash
         if: inputs.revert_commit == '' && inputs.revert_no_force_commit == '' && steps.check.outputs.has_new == 'true' && steps.merge.outputs.conflict == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -e
           if [ -z "$GEMINI_API_KEY" ]; then
-            echo "::error::GEMINI_API_KEY not set - cannot auto-resolve via Google Gemini Studio."
+            echo "::error::GEMINI_API_KEY not set - cannot auto-resolve via Google Gemini."
             git cherry-pick --abort 2>/dev/null || git merge --abort 2>/dev/null || true
             exit 1
           fi
@@ -255,7 +255,7 @@ jobs:
             
             prompt="You are a kernel merge resolver. FOCUS ON FOLLOWING LTS (google/android12-5.10-lts) - ALWAYS prefer LTS/theirs side. Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>> in this file. For version bumps (SUBLEVEL) take higher (LTS). For code, ALWAYS take LTS side if it adds safety checks (e.g. width>4096, skb_probe_transport_header). Remove markers, return ONLY file content, no markdown, no explanation.\n\nFile: $f\nContent:\n$content_trunc"
             
-            resp=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${GEMINI_API_KEY}" \
+            resp=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${GEMINI_API_KEY}" \
               -H 'Content-Type: application/json' \
               -d @- <<EOF
             {
@@ -305,6 +305,9 @@ jobs:
             
             git add "$f"
             echo "Resolved $f"
+            
+            echo "Waiting 15s for Gemini API rate limit reset..."
+            sleep 15
           done
           
           set -o pipefail
