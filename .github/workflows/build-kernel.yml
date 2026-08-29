@@ -195,20 +195,15 @@ jobs:
           echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=n" >> arch/arm64/configs/gki_defconfig
           echo "✅ Applied successfully!"
-          
-          - name: Auto-Fix Upstream 5.10 Backport Bugs (Self-Healing)
-            run: |
+
+      - name: Auto-Fix Upstream 5.10 Backport Bugs (Self-Healing)
+        run: |
           cd work/common
           echo "=== 1. Auto-patching 5.10 Timer API Bugs ==="
-          # Pure drivers folder mein jahan bhi timer_delete_sync hoga, ye usko automatically del_timer_sync bana dega
-          grep -rl "timer_delete_sync" drivers/ fs/ kernel/ 2>/dev/null | xargs sed -i 's/timer_delete_sync/del_timer_sync/g' 2>/dev/null || true
+          # Pure kernel tree mein jahan bhi timer_delete_sync hoga, ye usko automatically 5.10 ke del_timer_sync mein badal dega
+          grep -rl "timer_delete_sync" drivers/ fs/ kernel/ net/ include/ 2>/dev/null | xargs sed -i 's/timer_delete_sync/del_timer_sync/g' 2>/dev/null || true
           
           echo "✅ All upstream API bugs automatically healed!"
-
-      - name: Build kernel
-        run: |
-          chmod +x ./build-kernel.sh
-          ./build-kernel.sh ${{ inputs.ccache && '--ccache' || '' }}
 
       - name: Build kernel
         run: |
