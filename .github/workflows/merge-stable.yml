@@ -256,29 +256,26 @@ jobs:
             fi
           fi
 
-      - name: Auto-resolve conflicts via Google Gemini
+      - name: Auto-resolve conflicts via Google Gemini 3.7 Flash
         if: inputs.revert_commit == '' && inputs.revert_no_force_commit == '' && steps.check.outputs.has_new == 'true' && steps.merge.outputs.conflict == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -e
           if [ -z "$GEMINI_API_KEY" ]; then
-            echo "::error::GEMINI_API_KEY not set - cannot auto-resolve via Google Gemini Studio."
+            echo "::error::GEMINI_API_KEY not set - cannot auto-resolve via Google Gemini."
             git cherry-pick --abort 2>/dev/null || git merge --abort 2>/dev/null || true
             exit 1
           fi
-          # install jq if needed
           sudo apt-get update -qq && sudo apt-get install -y jq || true
           for f in $(git diff --name-only --diff-filter=U); do
             echo "=== Resolving $f ==="
-            # Makefile: never use LLM (it corrupts $(build)=scripts -> scripts/scripts)
             if [ "$f" = "Makefile" ]; then
               echo "Makefile conflict - taking stable/theirs directly to avoid LLM corruption"
               git checkout --theirs "$f" || true
               git add "$f"
               continue
             fi
-            # skip binary
             if file "$f" | grep -q "binary"; then
               echo "skip binary $f"
               git checkout --theirs "$f" || true
@@ -286,19 +283,16 @@ jobs:
               continue
             fi
             content=$(cat "$f")
-            
-            # Allow massive context window since Gemini supports up to 2 million tokens
             content_trunc=${content:0:400000} 
             extra="${{ inputs.ai_extra_prompt }}"
             
             if [ -n "$extra" ]; then
-              prompt="You are a kernel backport resolver. $extra FOCUS ON FOLLOWING STABLE (stable/linux-5.10.y) but do a proper backport for android12-5.10 - adapt APIs if needed (e.g. timer_delete_sync -> del_timer_sync, dmaengine_terminate_sync -> dmaengine_terminate_all with sync ordering), keep sync semantics, don't just take stable verbatim because it fits. Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>> in this file. For version bumps (SUBLEVEL) take higher (stable). Remove markers, return ONLY file content, no markdown, no explanation.\n\nFile: $f\nContent:\n$content_trunc"
+              prompt="You are a kernel backport resolver. $extra FOCUS ON FOLLOWING STABLE (stable/linux-5.10.y) but do a proper backport for android12-5.10 - adapt APIs if needed (e.g. timer_delete_sync -> del_timer_sync), keep sync semantics, don't just take stable verbatim because it fits. Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>> in this file. For version bumps (SUBLEVEL) take higher (stable). Remove markers, return ONLY file content, no markdown, no explanation.\n\nFile: $f\nContent:\n$content_trunc"
             else
               prompt="You are a kernel merge resolver. FOCUS ON FOLLOWING STABLE (stable/linux-5.10.y) - ALWAYS prefer stable/theirs side. Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>> in this file. For version bumps (SUBLEVEL) take higher (stable). For code, ALWAYS take stable side if it adds safety checks (e.g. width>4096, skb_probe_transport_header). Remove markers, return ONLY file content, no markdown, no explanation.\n\nFile: $f\nContent:\n$content_trunc"
             fi
             
-            # API call to Gemini AI Studio Endpoint using the Pro preview model
-            resp=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${GEMINI_API_KEY}" \
+            resp=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${GEMINI_API_KEY}" \
               -H 'Content-Type: application/json' \
               -d @- <<EOF
             {
@@ -318,14 +312,11 @@ jobs:
           EOF
             )
 
-            # Dump top API chunk output for logging safety 
             printf "%s\n" "${resp:0:500}"
-
-            # Gemini JSON structure for retrieving payload response text
             resolved=$(echo "$resp" | jq -r '.candidates[0].content.parts[0].text // empty' || true)
 
             if [ -z "$resolved" ] || echo "$resolved" | grep -q "^<<<<<<< "; then
-              echo "::warning::Gemini LLM failed to resolve $f cleanly, keeping markers or no output provided"
+              echo "::warning::Gemini LLM failed to resolve $f cleanly, keeping markers"
               if echo "$f" | grep -qE "Makefile|amdgpu_uvd.c|af_packet.c"; then
                 if grep -q "SUBLEVEL" "$f"; then
                   sed -i '/<<<<<<< HEAD/d;/=======/d;/>>>>>>>/d' "$f"
@@ -344,13 +335,15 @@ jobs:
               fi
             fi
 
-            # check remaining markers
             if grep -q "^<<<<<<< " "$f"; then
               echo "Still has markers, manual fallback to --theirs (stable)"
               git checkout --theirs "$f" || true
             fi
             git add "$f"
             echo "Resolved $f"
+            
+            echo "Waiting 15s for Gemini API rate limit reset..."
+            sleep 15
           done
 
           set -o pipefail
