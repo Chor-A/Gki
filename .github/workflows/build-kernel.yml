@@ -32,11 +32,11 @@ on:
           - clang 14
         default: "clang 19"
       defconfig_fragment_exclude:
-        description: 'Defconfig fragments to exclude (space- or comma-separated names)'
+        description: 'Defconfig fragments to exclude'
         required: false
         default: ""
       append_build_env:
-        description: 'Extra KEY=VALUE pairs appended to build.config (comma-separated)'
+        description: 'Extra KEY=VALUE pairs appended to build.config'
         required: false
         default: ""
       append_config:
@@ -130,70 +130,48 @@ jobs:
         run: |
           cd work/common
 
-          # =========================================================================
-          # 1. SETUP SUSFS SOURCE CODE & PATCH (AB SABSE PEHLE YE HOGA)
-          # =========================================================================
           echo "=== 1. Integrating SUSFS into Kernel ==="
           git clone --depth=1 -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
-          
           cp -r ../susfs4ksu/kernel_patches/fs/* fs/
           cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
-          
           patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue"
 
-          # =========================================================================
-          # 2. APPLY FULL COMPLETE SPOOF PATCH
-          # =========================================================================
           echo "=== 2. Applying Full Complete Spoof Patch ==="
           SPOOF_PATCH="$GITHUB_WORKSPACE/.github/workflows/patches/full_complete_spoof.patch"
           if [ ! -f "$SPOOF_PATCH" ]; then
             SPOOF_PATCH="$GITHUB_WORKSPACE/patches/full_complete_spoof.patch"
           fi
-
           if [ -f "$SPOOF_PATCH" ]; then
             sed -i 's/\r$//' "$SPOOF_PATCH"
-            patch -p1 -N --no-backup-if-mismatch < "$SPOOF_PATCH" || echo "Spoof patch partially skipped (already covered by SUSFS)"
+            patch -p1 -N --no-backup-if-mismatch < "$SPOOF_PATCH" || echo "Spoof patch partially skipped"
             echo "✅ Spoofs dynamically injected."
           else
             echo "❌ ERROR: full_complete_spoof.patch not found!"
             exit 1
           fi
 
-          # =========================================================================
-          # 3. SETUP NOMOUNT (MANUAL INTEGRATION - DEV BRANCH)
-          # =========================================================================
           echo "=== 3. Setting up NoMount (Manual Method) ==="
           git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
-          
           mkdir -p fs/nomount
           cp -f ../nomount_repo/kernel/src/* fs/nomount/
-          
           grep -q 'fs/nomount/Kconfig' fs/Kconfig || echo 'source "fs/nomount/Kconfig"' >> fs/Kconfig
           grep -q 'nomount/' fs/Makefile || echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
           echo "CONFIG_NOMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
-          # =========================================================================
-          # 4. APPLY MGLRU PATCH
-          # =========================================================================
           echo "=== 4. Applying MGLRU Patch ==="
           MGLRU_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/mglru.patch"
           if [ ! -f "$MGLRU_PATH" ]; then
             MGLRU_PATH="$GITHUB_WORKSPACE/patches/mglru.patch"
           fi
-
           if [ -f "$MGLRU_PATH" ]; then
             sed -i 's/\r$//' "$MGLRU_PATH"
             git apply --verbose --ignore-whitespace --whitespace=nowarn "$MGLRU_PATH" || patch -p1 -N < "$MGLRU_PATH"
             echo "MGLRU Patch applied successfully!"
           fi
 
-          # =========================================================================
-          # 5. SETUP KERNELSU-NEXT VIA PERSHOOT DEV-SUSFS SCRIPT
-          # =========================================================================
           echo "=== 5. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
 
-          # Force-enable required KSU configurations
           sed -i 's/CONFIG_KSU=m/CONFIG_KSU=y/g' arch/arm64/configs/gki_defconfig || true
           echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_NEXT=y" >> arch/arm64/configs/gki_defconfig
@@ -202,7 +180,6 @@ jobs:
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/gki_defconfig
 
-          # Enable SUSFS Full Flags
           echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> arch/arm64/configs/gki_defconfig
@@ -217,8 +194,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=n" >> arch/arm64/configs/gki_defconfig
-
-          echo "✅ SUSFS, Spoofs, Manual NoMount, MGLRU & pershoot KernelSU-Next applied successfully!"
+          echo "✅ Applied successfully!"
 
       - name: Build kernel
         run: |
@@ -260,4 +236,3 @@ jobs:
               --notes "Built with pershoot KernelSU-Next (susfs), MGLRU, NoMount & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
-          echo "Release $tag completed successfully."
