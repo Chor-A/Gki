@@ -386,4 +386,55 @@ jobs:
 
           static int __init audit_fsnotify_init(void)
           {
-          	audit_fsn
+          	audit_fsnotify_group = fsnotify_alloc_group(&audit_mark_fsnotify_ops);
+          	if (IS_ERR(audit_fsnotify_group)) {
+          		audit_fsnotify_group = NULL;
+          		audit_panic("cannot create audit fsnotify group");
+          	}
+          	return 0;
+          }
+          device_initcall(audit_fsnotify_init);
+          EOF
+
+          echo "✅ All upstream API bugs automatically healed!"
+
+      - name: Build kernel
+        run: |
+          chmod +x ./build-kernel.sh
+          ./build-kernel.sh ${{ inputs.ccache && '--ccache' || '' }}
+
+      - name: Save ccache cache
+        if: ${{ inputs.ccache && always() }}
+        uses: actions/cache/save@v4
+        with:
+          path: work/.ccache
+          key: cfx-ccache-${{ env.CLANG_ASSET }}-${{ inputs.kernel_repo }}-${{ inputs.kernel_branch }}-${{ github.run_id }}
+
+      - name: Publish release
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$RELEASE_TAG"
+          if [ -z "$tag" ]; then
+            tag="kernel-$(date -u +%Y%m%d-%H%M)"
+          fi
+          
+          cd "$GITHUB_WORKSPACE/work/dist"
+          pkg="$GITHUB_WORKSPACE/work/pkg"
+          mkdir -p "$pkg"
+          assets=()
+          for f in Image Image.lz4 Image.gz vmlinux System.map ikconfig .config; do
+            [ -f "$f" ] && assets+=("$f")
+          done
+          tar -I 'zstd -T0' -cf "$pkg/kernel-dist.tar.zst" .
+          assets+=("$pkg/kernel-dist.tar.zst")
+          
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" --clobber "${assets[@]}"
+          else
+            gh release create "$tag" \
+              --title "Templar Kernel GKI $tag" \
+              --notes "Built with pershoot KernelSU-Next (susfs), MGLRU, NoMount & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              "${assets[@]}"
+          fi
