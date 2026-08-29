@@ -14,7 +14,7 @@ on:
       kernel_repo:
         description: 'Kernel source repository (full URL)'
         required: false
-        default: "https://github.com/Steambot12/Templar-Kernel-GKI-5.10"
+        default: "https://github.com/Chor-A/Templar-Kernel-GKI-5.10"
       kernel_branch:
         description: 'Kernel source branch'
         required: false
@@ -121,8 +121,8 @@ jobs:
           fi
 
           echo "=== Reverting Hardcoded NoMount (Commit 3be84ff) ==="
-          git config --global user.email "github-actions@github.com"
-          git config --global user.name "GitHub Actions"
+          git config --global user.email "Antonio_Nelson@proton.me"
+          git config --global user.name "Chor-A"
           
           git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
 
