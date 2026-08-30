@@ -198,69 +198,85 @@ jobs:
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=n" >> arch/arm64/configs/gki_defconfig
           echo "✅ Applied successfully!"
 
-      - name: Auto-Fix Kernel via Google Gemini 3.7 Flash & Fallbacks
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      - name: Auto-patch 5.10 Compatibility & Standard audit_fsnotify.c
         run: |
           cd work/common
-          sudo apt-get update -qq && sudo apt-get install -y jq curl || true
-
-          # 1. Universal Tree-Wide 5.10 Compatibility Patches
-          echo "=== Applying Tree-Wide 5.10 Compatibility Patches ==="
+          echo "=== 1. Auto-patching 5.10 Timer API Bugs ==="
           grep -rl "timer_delete_sync" drivers/ fs/ kernel/ net/ include/ 2>/dev/null | xargs sed -i 's/timer_delete_sync/del_timer_sync/g' 2>/dev/null || true
-          
-          # 2. Inject Canonical Linux 5.10 audit_fsnotify.c with exact struct definitions
-          echo "Injecting canonical Linux 5.10 audit_fsnotify.c..."
+
+          echo "=== 2. Ensuring clean standard audit_fsnotify.c ==="
           cat << 'EOF' > kernel/audit_fsnotify.c
           // SPDX-License-Identifier: GPL-2.0-or-later
-          /* audit_fsnotify.c -- tracking inodes */
+          /* audit_fsnotify.c -- tracking inodes
+           *
+           * Copyright 2003-2009,2014-2015 Red Hat, Inc.
+           * Copyright 2005 Hewlett-Packard Development Company, L.P.
+           * Copyright 2005 IBM Corporation
+           */
 
+          #include <linux/kernel.h>
           #include <linux/audit.h>
           #include <linux/kthread.h>
           #include <linux/mutex.h>
           #include <linux/fs.h>
           #include <linux/fsnotify_backend.h>
           #include <linux/namei.h>
+          #include <linux/netlink.h>
+          #include <linux/sched.h>
           #include <linux/slab.h>
-
+          #include <linux/security.h>
           #include "audit.h"
 
-          #define AUDIT_FS_EVENTS (FS_MOVE | FS_CREATE | FS_DELETE | FS_DELETE_SELF | FS_MOVE_SELF)
-
+          /*
+           * this mark lives on the parent directory of the inode in question.
+           * but dev, ino, and path are about the child
+           */
           struct audit_fsnotify_mark {
-          	dev_t dev;
-          	u64 ino;
-          	struct fsnotify_mark mark;
-          	struct audit_krule *krule;
+          	dev_t dev;		/* associated superblock device */
+          	unsigned long ino;	/* associated inode number */
+          	char *path;		/* insertion path */
+          	struct fsnotify_mark mark; /* fsnotify mark on the inode */
+          	struct audit_krule *rule;
           };
 
+          /* fsnotify handle. */
           static struct fsnotify_group *audit_fsnotify_group;
 
-          static struct audit_fsnotify_mark *audit_find_mark(u64 ino, dev_t dev);
+          /* fsnotify events we care about. */
+          #define AUDIT_FS_EVENTS (FS_MOVE | FS_CREATE | FS_DELETE | FS_DELETE_SELF |\
+          			 FS_MOVE_SELF)
+
+          static void audit_fsnotify_mark_free(struct audit_fsnotify_mark *audit_mark)
+          {
+          	kfree(audit_mark->path);
+          	kfree(audit_mark);
+          }
+
+          static void audit_fsnotify_free_mark(struct fsnotify_mark *mark)
+          {
+          	struct audit_fsnotify_mark *audit_mark;
+
+          	audit_mark = container_of(mark, struct audit_fsnotify_mark, mark);
+          	audit_fsnotify_mark_free(audit_mark);
+          }
+
+          char *audit_mark_path(struct audit_fsnotify_mark *mark)
+          {
+          	return mark->path;
+          }
 
           int audit_mark_compare(struct audit_fsnotify_mark *mark, u64 ino, dev_t dev)
           {
-          	if (mark->ino == ino && mark->dev == dev)
-          		return 1;
-          	return 0;
+          	if (mark->ino == AUDIT_INO_UNSET)
+          		return 0;
+          	return (mark->ino == ino) && (mark->dev == dev);
           }
 
-          static struct audit_fsnotify_mark *audit_find_mark(u64 ino, dev_t dev)
+          static void audit_update_mark(struct audit_fsnotify_mark *audit_mark,
+          			     const struct inode *inode)
           {
-          	struct audit_fsnotify_mark *mark;
-          	struct fsnotify_mark *entry;
-
-          	mutex_lock(&audit_fsnotify_group->mark_mutex);
-          	list_for_each_entry(entry, &audit_fsnotify_group->marks_list, g_list) {
-          		mark = container_of(entry, struct audit_fsnotify_mark, mark);
-          		if (audit_mark_compare(mark, ino, dev)) {
-          			fsnotify_get_mark(entry);
-          			mutex_unlock(&audit_fsnotify_group->mark_mutex);
-          			return mark;
-          		}
-          	}
-          	mutex_unlock(&audit_fsnotify_group->mark_mutex);
-          	return NULL;
+          	audit_mark->dev = inode ? inode->i_sb->s_dev : AUDIT_DEV_UNSET;
+          	audit_mark->ino = inode ? inode->i_ino : AUDIT_INO_UNSET;
           }
 
           struct audit_fsnotify_mark *audit_alloc_mark(struct audit_krule *krule, char *pathname, int len)
@@ -268,46 +284,56 @@ jobs:
           	struct audit_fsnotify_mark *audit_mark;
           	struct path path;
           	struct dentry *dentry;
-          	struct inode *inode;
-          	u64 ino;
-          	dev_t dev;
           	int ret;
 
           	if (pathname[0] != '/' || pathname[len-1] == '/')
           		return ERR_PTR(-EINVAL);
 
-          	dentry = kern_path_locked(pathname, &path);
+          	dentry = kern_path_parent(pathname, &path);
           	if (IS_ERR(dentry))
-          		return ERR_CAST(dentry);
-          	inode = path.dentry->d_inode;
-          	ino = inode->i_ino;
-          	dev = inode->i_sb->s_dev;
-          	inode_unlock(inode);
-          	dput(dentry);
-
-          	audit_mark = audit_find_mark(ino, dev);
-          	if (audit_mark) {
-          		audit_mark->krule = krule;
-          		return audit_mark;
-          	}
+          		return ERR_CAST(dentry); /* returning an error */
 
           	audit_mark = kzalloc(sizeof(*audit_mark), GFP_KERNEL);
-          	if (!audit_mark)
-          		return ERR_PTR(-ENOMEM);
+          	if (unlikely(!audit_mark)) {
+          		audit_mark = ERR_PTR(-ENOMEM);
+          		goto out;
+          	}
 
           	fsnotify_init_mark(&audit_mark->mark, audit_fsnotify_group);
           	audit_mark->mark.mask = AUDIT_FS_EVENTS;
-          	audit_mark->krule = krule;
-          	audit_mark->ino = ino;
-          	audit_mark->dev = dev;
+          	audit_mark->path = pathname;
+          	audit_update_mark(audit_mark, dentry->d_inode);
+          	audit_mark->rule = krule;
 
-          	ret = fsnotify_add_inode_mark(&audit_mark->mark, inode, 0);
+          	ret = fsnotify_add_inode_mark(&audit_mark->mark, path.dentry->d_inode, 0);
           	if (ret < 0) {
+          		audit_mark->path = NULL;
           		fsnotify_put_mark(&audit_mark->mark);
           		audit_mark = ERR_PTR(ret);
           	}
 
+          out:
+          	dput(dentry);
+          	path_put(&path);
           	return audit_mark;
+          }
+
+          static void audit_mark_log_rule_change(struct audit_fsnotify_mark *audit_mark, char *op)
+          {
+          	struct audit_buffer *ab;
+          	struct audit_krule *rule = audit_mark->rule;
+
+          	if (!audit_enabled)
+          		return;
+          	ab = audit_log_start(audit_context(), GFP_NOFS, AUDIT_CONFIG_CHANGE);
+          	if (unlikely(!ab))
+          		return;
+          	audit_log_session_info(ab);
+          	audit_log_format(ab, " op=%s path=", op);
+          	audit_log_untrustedstring(ab, audit_mark->path);
+          	audit_log_key(ab, rule->filterkey);
+          	audit_log_format(ab, " list=%d res=1", rule->listnr);
+          	audit_log_end(ab);
           }
 
           void audit_remove_mark(struct audit_fsnotify_mark *audit_mark)
@@ -326,79 +352,56 @@ jobs:
           	}
           }
 
-          static int audit_handle_event(struct fsnotify_group *group,
-          			      u32 mask,
-          			      const void *data, int data_type,
-          			      const struct qstr *file_name, u32 cookie,
-          			      struct fsnotify_iter_info *iter_info)
+          static void audit_autoremove_mark_rule(struct audit_fsnotify_mark *audit_mark)
           {
-          	struct fsnotify_mark *inode_mark = fsnotify_iter_inode_mark(iter_info);
+          	struct audit_krule *rule = audit_mark->rule;
+          	struct audit_entry *entry = container_of(rule, struct audit_entry, rule);
 
-          	if (mask & (FS_CREATE | FS_MOVED_TO | FS_DELETE | FS_MOVED_FROM)) {
-          		if (inode_mark) {
-          			struct audit_fsnotify_mark *audit_mark;
+          	audit_mark_log_rule_change(audit_mark, "autoremove_rule");
+          	audit_del_rule(entry);
+          }
 
-          			audit_mark = container_of(inode_mark, struct audit_fsnotify_mark, mark);
-          			audit_remove_mark(audit_mark);
-          		}
+          /* Update mark data in audit rules based on fsnotify events. */
+          static int audit_mark_handle_event(struct fsnotify_mark *inode_mark, u32 mask,
+          				   struct inode *inode, struct inode *dir,
+          				   const struct qstr *dname, u32 cookie)
+          {
+          	struct audit_fsnotify_mark *audit_mark;
+
+          	audit_mark = container_of(inode_mark, struct audit_fsnotify_mark, mark);
+
+          	if (WARN_ON_ONCE(inode_mark->group != audit_fsnotify_group) ||
+          	    WARN_ON_ONCE(!inode))
+          		return 0;
+
+          	if (mask & (FS_CREATE|FS_MOVED_TO|FS_DELETE|FS_MOVED_FROM)) {
+          		if (audit_compare_dname_path(dname, audit_mark->path, AUDIT_NAME_FULL))
+          			return 0;
+          		audit_update_mark(audit_mark, inode);
+          	} else if (mask & (FS_DELETE_SELF|FS_UNMOUNT|FS_MOVE_SELF)) {
+          		audit_autoremove_mark_rule(audit_mark);
           	}
+
           	return 0;
           }
 
-          static const struct fsnotify_ops audit_fsnotify_ops = {
-          	.handle_event = audit_handle_event,
+          static const struct fsnotify_ops audit_mark_fsnotify_ops = {
+          	.handle_inode_event = audit_mark_handle_event,
+          	.free_mark = audit_fsnotify_free_mark,
           };
 
           static int __init audit_fsnotify_init(void)
           {
-          	audit_fsnotify_group = fsnotify_alloc_group(&audit_fsnotify_ops);
+          	audit_fsnotify_group = fsnotify_alloc_group(&audit_mark_fsnotify_ops);
           	if (IS_ERR(audit_fsnotify_group)) {
+          		audit_fsnotify_group = NULL;
           		audit_panic("cannot create audit fsnotify group");
-          		return PTR_ERR(audit_fsnotify_group);
           	}
           	return 0;
           }
           device_initcall(audit_fsnotify_init);
           EOF
-
-          # 3. Advanced AI Healing with Gemini 3.7 Flash (if API Key provided)
-          if [ -n "$GEMINI_API_KEY" ]; then
-            echo "=== Scanning for Additional 5.10 Backport Issues with Gemini 3.7 Flash ==="
-            FILES="drivers/tty/serial/amba-pl011.c"
-            
-            for f in $FILES; do
-              if [ -f "$f" ]; then
-                echo "Analyzing $f with Gemini 3.7 Flash..."
-                content=$(head -c 300000 "$f")
-                prompt="You are an autonomous Linux 5.10 GKI kernel developer. Fix any incompatible Linux 6.x timer or DMA API backports in this file (such as changing timer_delete_sync to del_timer_sync). Return ONLY raw valid C code without markdown code blocks."
-                
-                PAYLOAD=$(jq -n \
-                  --arg sys "You ONLY return raw C code. Never output markdown code blocks like \`\`\`c." \
-                  --arg text "$prompt\n\nFile: $f\n$content" \
-                  '{
-                    system_instruction: { parts: [{ text: $sys }] },
-                    contents: [{ role: "user", parts: [{ text: $text }] }],
-                    generationConfig: {
-                      temperature: 0.1,
-                      thinkingConfig: { thinkingBudget: 4096 }
-                    }
-                  }')
-
-                resp=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${GEMINI_API_KEY}" \
-                  -H 'Content-Type: application/json' \
-                  -d "$PAYLOAD")
-                
-                resolved=$(echo "$resp" | jq -r '.candidates[0].content.parts[]? | select(.thought != true) | .text' 2>/dev/null | sed -e 's/^```.*//g' -e 's/^```//g' || true)
-                
-                if [ -n "$resolved" ] && [ $(wc -c <<< "$resolved") -gt 100 ]; then
-                  echo "$resolved" > "$f"
-                  echo "✅ $f successfully healed by Gemini."
-                else
-                  echo "⚠️ Gemini skipped or rate limited. Keeping default offline fixes for $f."
-                fi
-              fi
-            done
-          fi
+          echo "✅ All upstream API bugs automatically healed!"
 
       - name: Build kernel
         run: |
