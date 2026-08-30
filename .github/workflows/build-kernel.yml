@@ -2,7 +2,7 @@ name: build-kernel
 
 on:
   schedule:
-    - cron: "0 22 * * *" # Daily raat 3:30 AM IST (22:00 UTC)
+    - cron: "0 22 * * *" # Daily 3:30 AM IST (22:00 UTC)
   workflow_dispatch:
     inputs:
       publish_release:
@@ -198,66 +198,60 @@ jobs:
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=n" >> arch/arm64/configs/gki_defconfig
           echo "✅ Applied successfully!"
 
-      - name: Auto-Fix Kernel via Google Gemini 3.7 Flash (High Thinking)
+      - name: Auto-Fix Kernel via Google Gemini 3.7 Flash & Fallbacks
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd work/common
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "::warning::GEMINI_API_KEY not found, applying default offline self-healing"
-            grep -rl "timer_delete_sync" drivers/ fs/ kernel/ net/ include/ 2>/dev/null | xargs sed -i 's/timer_delete_sync/del_timer_sync/g' 2>/dev/null || true
-            exit 0
+          sudo apt-get update -qq && sudo apt-get install -y jq curl || true
+
+          # 1. Guaranteed Universal 5.10 Tree-wide Offline Fixes
+          echo "=== Applying Tree-Wide 5.10 Compatibility Patches ==="
+          grep -rl "timer_delete_sync" drivers/ fs/ kernel/ net/ include/ 2>/dev/null | xargs sed -i 's/timer_delete_sync/del_timer_sync/g' 2>/dev/null || true
+          
+          if grep -q "struct audit_watch_ctx" kernel/audit_fsnotify.c 2>/dev/null; then
+            echo "Restoring clean Android 12 Linux 5.10 audit_fsnotify.c..."
+            curl -sSL "https://android.googlesource.com/kernel/common/+/refs/heads/android12-5.10/kernel/audit_fsnotify.c?format=TEXT" | base64 --decode > kernel/audit_fsnotify.c || true
           fi
-          
-          sudo apt-get update -qq && sudo apt-get install -y jq || true
-          echo "=== Scanning for 5.10 Backport Issues with Gemini 3.7 Flash High Thinking ==="
-          
-          FILES="drivers/tty/serial/amba-pl011.c kernel/audit_fsnotify.c"
-          
-          for f in $FILES; do
-            if [ -f "$f" ]; then
-              echo "Analyzing and healing $f with Gemini 3.7 Flash High Thinking..."
-              content=$(cat "$f")
-              content_trunc=${content:0:400000}
-              prompt="You are an expert Linux 5.10 GKI kernel C developer. Your job is to fix any 6.x API backport issues in this file. Specifically: 1) Change any 'timer_delete_sync' to 'del_timer_sync'. 2) If the file is 'audit_fsnotify.c', ensure 'audit_alloc_mark' only uses standard 3 arguments (struct audit_krule *krule, char *pathname, int len) and remove 'ctx' completely. Return ONLY the clean raw C code, no markdown fences like \`\`\`c."
-              
-              resp=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${GEMINI_API_KEY}" \
-                -H 'Content-Type: application/json' \
-                -d @- <<EOF
-              {
-                "system_instruction": {
-                  "parts": { "text": "You ONLY return raw C code. Never output markdown code blocks." }
-                },
-                "contents": [{
-                  "role": "user",
-                  "parts": [{
-                    "text": $(jq -Rs . <<<"$prompt\n\nFile: $f\n$content_trunc")
-                  }]
-                }],
-                "generationConfig": {
-                  "temperature": 0.1,
-                  "thinkingConfig": {
-                    "thinkingBudget": 8192
-                  }
-                }
-              }
-          EOF
-              )
-              
-              resolved=$(echo "$resp" | jq -r '[.candidates[0].content.parts[] | select(.thought != true) | .text] | join("") // empty' | sed -e 's/^```.*//g' -e 's/^```//g' || true)
-              
-              if [ -n "$resolved" ] && [ $(wc -c <<< "$resolved") -gt 100 ]; then
-                echo "$resolved" > "$f"
-                echo "✅ $f successfully healed by Gemini 3.7 Flash High Thinking!"
-              else
-                echo "⚠️ Keeping fallback fix for $f"
-                sed -i 's/timer_delete_sync/del_timer_sync/g' "$f" 2>/dev/null || true
+
+          # 2. Advanced AI Healing with Gemini 3.7 Flash (if API Key provided)
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "=== Scanning for Additional 5.10 Backport Issues with Gemini 3.7 Flash ==="
+            FILES="drivers/tty/serial/amba-pl011.c"
+            
+            for f in $FILES; do
+              if [ -f "$f" ]; then
+                echo "Analyzing $f with Gemini 3.7 Flash..."
+                content=$(head -c 300000 "$f")
+                prompt="You are an autonomous Linux 5.10 GKI kernel developer. Fix any incompatible Linux 6.x timer or DMA API backports in this file (such as changing timer_delete_sync to del_timer_sync). Return ONLY raw valid C code without markdown code blocks."
+                
+                PAYLOAD=$(jq -n \
+                  --arg sys "You ONLY return raw C code. Never output markdown code blocks like \`\`\`c." \
+                  --arg text "$prompt\n\nFile: $f\n$content" \
+                  '{
+                    system_instruction: { parts: [{ text: $sys }] },
+                    contents: [{ role: "user", parts: [{ text: $text }] }],
+                    generationConfig: {
+                      temperature: 0.1,
+                      thinkingConfig: { thinkingBudget: 4096 }
+                    }
+                  }')
+
+                resp=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${GEMINI_API_KEY}" \
+                  -H 'Content-Type: application/json' \
+                  -d "$PAYLOAD")
+                
+                resolved=$(echo "$resp" | jq -r '.candidates[0].content.parts[]? | select(.thought != true) | .text' 2>/dev/null | sed -e 's/^```.*//g' -e 's/^```//g' || true)
+                
+                if [ -n "$resolved" ] && [ $(wc -c <<< "$resolved") -gt 100 ]; then
+                  echo "$resolved" > "$f"
+                  echo "✅ $f successfully healed by Gemini."
+                else
+                  echo "⚠️ Gemini skipped or rate limited. Keeping default offline fixes for $f."
+                fi
               fi
-              
-              echo "Sleeping for 60 seconds for a complete Google AI Quota Reset..."
-              sleep 60
-            fi
-          done
+            done
+          fi
 
       - name: Build kernel
         run: |
