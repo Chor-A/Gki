@@ -205,16 +205,152 @@ jobs:
           cd work/common
           sudo apt-get update -qq && sudo apt-get install -y jq curl || true
 
-          # 1. Guaranteed Universal 5.10 Tree-wide Offline Fixes
+          # 1. Universal Tree-Wide 5.10 Compatibility Patches
           echo "=== Applying Tree-Wide 5.10 Compatibility Patches ==="
           grep -rl "timer_delete_sync" drivers/ fs/ kernel/ net/ include/ 2>/dev/null | xargs sed -i 's/timer_delete_sync/del_timer_sync/g' 2>/dev/null || true
           
-          if grep -q "struct audit_watch_ctx" kernel/audit_fsnotify.c 2>/dev/null; then
-            echo "Restoring clean Android 12 Linux 5.10 audit_fsnotify.c..."
-            curl -sSL "https://android.googlesource.com/kernel/common/+/refs/heads/android12-5.10/kernel/audit_fsnotify.c?format=TEXT" | base64 --decode > kernel/audit_fsnotify.c || true
-          fi
+          # 2. Embed pristine, type-safe 5.10 audit_fsnotify.c (matches u64 ino declarations)
+          echo "Injecting canonical 5.10 audit_fsnotify.c..."
+          cat << 'EOF' > kernel/audit_fsnotify.c
+          // SPDX-License-Identifier: GPL-2.0-or-later
+          /* audit_fsnotify.c -- tracking inodes */
 
-          # 2. Advanced AI Healing with Gemini 3.7 Flash (if API Key provided)
+          #include <linux/audit.h>
+          #include <linux/kthread.h>
+          #include <linux/mutex.h>
+          #include <linux/fs.h>
+          #include <linux/fsnotify_backend.h>
+          #include <linux/namei.h>
+          #include <linux/slab.h>
+
+          #include "audit.h"
+
+          static struct audit_fsnotify_mark *audit_find_mark(u64 ino, dev_t dev);
+
+          struct audit_fsnotify_mark *audit_alloc_mark(struct audit_krule *krule, char *pathname, int len)
+          {
+          	struct audit_fsnotify_mark *audit_mark;
+          	struct path path;
+          	struct dentry *dentry;
+          	struct inode *inode;
+          	u64 ino;
+          	dev_t dev;
+          	int ret;
+
+          	if (pathname[0] != '/' || pathname[len-1] == '/')
+          		return ERR_PTR(-EINVAL);
+
+          	dentry = kern_path_locked(pathname, &path);
+          	if (IS_ERR(dentry))
+          		return ERR_CAST(dentry);
+          	inode = path.dentry->d_inode;
+          	ino = inode->i_ino;
+          	dev = inode->i_sb->s_dev;
+          	inode_unlock(inode);
+          	dput(dentry);
+
+          	audit_mark = audit_find_mark(ino, dev);
+          	if (audit_mark) {
+          		audit_mark->krule = krule;
+          		return audit_mark;
+          	}
+
+          	audit_mark = kzalloc(sizeof(*audit_mark), GFP_KERNEL);
+          	if (!audit_mark)
+          		return ERR_PTR(-ENOMEM);
+
+          	fsnotify_init_mark(&audit_mark->mark, audit_fsnotify_group);
+          	audit_mark->mark.mask = AUDIT_FS_EVENTS;
+          	audit_mark->krule = krule;
+          	audit_mark->ino = ino;
+          	audit_mark->dev = dev;
+
+          	ret = fsnotify_add_inode_mark(&audit_mark->mark, inode, 0);
+          	if (ret < 0) {
+          		fsnotify_put_mark(&audit_mark->mark);
+          		audit_mark = ERR_PTR(ret);
+          	}
+
+          	return audit_mark;
+          }
+
+          int audit_mark_compare(struct audit_fsnotify_mark *mark, u64 ino, dev_t dev)
+          {
+          	if (mark->ino == ino && mark->dev == dev)
+          		return 1;
+          	return 0;
+          }
+
+          static struct audit_fsnotify_mark *audit_find_mark(u64 ino, dev_t dev)
+          {
+          	struct audit_fsnotify_mark *mark;
+          	struct fsnotify_mark *entry;
+
+          	fsnotify_group_lock(audit_fsnotify_group);
+          	list_for_each_entry(entry, &audit_fsnotify_group->marks_list, g_list) {
+          		mark = container_of(entry, struct audit_fsnotify_mark, mark);
+          		if (audit_mark_compare(mark, ino, dev)) {
+          			fsnotify_get_mark(entry);
+          			fsnotify_group_unlock(audit_fsnotify_group);
+          			return mark;
+          		}
+          	}
+          	fsnotify_group_unlock(audit_fsnotify_group);
+          	return NULL;
+          }
+
+          void audit_remove_mark(struct audit_fsnotify_mark *audit_mark)
+          {
+          	fsnotify_destroy_mark(&audit_mark->mark, audit_fsnotify_group);
+          	fsnotify_put_mark(&audit_mark->mark);
+          }
+
+          void audit_remove_mark_rule(struct audit_krule *krule)
+          {
+          	struct audit_fsnotify_mark *mark = krule->exe;
+
+          	if (mark) {
+          		audit_remove_mark(mark);
+          		krule->exe = NULL;
+          	}
+          }
+
+          static int audit_handle_event(struct fsnotify_group *group,
+          			      u32 mask,
+          			      const void *data, int data_type,
+          			      const struct qstr *file_name, u32 cookie,
+          			      struct fsnotify_iter_info *iter_info)
+          {
+          	struct fsnotify_mark *inode_mark = fsnotify_iter_inode_mark(iter_info);
+
+          	if (mask & (FS_CREATE | FS_MOVED_TO | FS_DELETE | FS_MOVED_FROM)) {
+          		if (inode_mark) {
+          			struct audit_fsnotify_mark *audit_mark;
+
+          			audit_mark = container_of(inode_mark, struct audit_fsnotify_mark, mark);
+          			audit_remove_mark(audit_mark);
+          		}
+          	}
+          	return 0;
+          }
+
+          static const struct fsnotify_ops audit_fsnotify_ops = {
+          	.handle_event = audit_handle_event,
+          };
+
+          static int __init audit_fsnotify_init(void)
+          {
+          	audit_fsnotify_group = fsnotify_alloc_group(&audit_fsnotify_ops);
+          	if (IS_ERR(audit_fsnotify_group)) {
+          		audit_panic("cannot create audit fsnotify group");
+          		return PTR_ERR(audit_fsnotify_group);
+          	}
+          	return 0;
+          }
+          device_initcall(audit_fsnotify_init);
+          EOF
+
+          # 3. Advanced AI Healing with Gemini 3.7 Flash (if API Key provided)
           if [ -n "$GEMINI_API_KEY" ]; then
             echo "=== Scanning for Additional 5.10 Backport Issues with Gemini 3.7 Flash ==="
             FILES="drivers/tty/serial/amba-pl011.c"
