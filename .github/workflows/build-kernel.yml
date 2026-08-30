@@ -209,8 +209,8 @@ jobs:
           echo "=== Applying Tree-Wide 5.10 Compatibility Patches ==="
           grep -rl "timer_delete_sync" drivers/ fs/ kernel/ net/ include/ 2>/dev/null | xargs sed -i 's/timer_delete_sync/del_timer_sync/g' 2>/dev/null || true
           
-          # 2. Embed pristine, type-safe 5.10 audit_fsnotify.c (matches u64 ino declarations)
-          echo "Injecting canonical 5.10 audit_fsnotify.c..."
+          # 2. Inject Canonical Linux 5.10 audit_fsnotify.c with exact struct definitions
+          echo "Injecting canonical Linux 5.10 audit_fsnotify.c..."
           cat << 'EOF' > kernel/audit_fsnotify.c
           // SPDX-License-Identifier: GPL-2.0-or-later
           /* audit_fsnotify.c -- tracking inodes */
@@ -225,7 +225,43 @@ jobs:
 
           #include "audit.h"
 
+          #define AUDIT_FS_EVENTS (FS_MOVE | FS_CREATE | FS_DELETE | FS_DELETE_SELF | FS_MOVE_SELF)
+
+          struct audit_fsnotify_mark {
+          	dev_t dev;
+          	u64 ino;
+          	struct fsnotify_mark mark;
+          	struct audit_krule *krule;
+          };
+
+          static struct fsnotify_group *audit_fsnotify_group;
+
           static struct audit_fsnotify_mark *audit_find_mark(u64 ino, dev_t dev);
+
+          int audit_mark_compare(struct audit_fsnotify_mark *mark, u64 ino, dev_t dev)
+          {
+          	if (mark->ino == ino && mark->dev == dev)
+          		return 1;
+          	return 0;
+          }
+
+          static struct audit_fsnotify_mark *audit_find_mark(u64 ino, dev_t dev)
+          {
+          	struct audit_fsnotify_mark *mark;
+          	struct fsnotify_mark *entry;
+
+          	mutex_lock(&audit_fsnotify_group->mark_mutex);
+          	list_for_each_entry(entry, &audit_fsnotify_group->marks_list, g_list) {
+          		mark = container_of(entry, struct audit_fsnotify_mark, mark);
+          		if (audit_mark_compare(mark, ino, dev)) {
+          			fsnotify_get_mark(entry);
+          			mutex_unlock(&audit_fsnotify_group->mark_mutex);
+          			return mark;
+          		}
+          	}
+          	mutex_unlock(&audit_fsnotify_group->mark_mutex);
+          	return NULL;
+          }
 
           struct audit_fsnotify_mark *audit_alloc_mark(struct audit_krule *krule, char *pathname, int len)
           {
@@ -272,31 +308,6 @@ jobs:
           	}
 
           	return audit_mark;
-          }
-
-          int audit_mark_compare(struct audit_fsnotify_mark *mark, u64 ino, dev_t dev)
-          {
-          	if (mark->ino == ino && mark->dev == dev)
-          		return 1;
-          	return 0;
-          }
-
-          static struct audit_fsnotify_mark *audit_find_mark(u64 ino, dev_t dev)
-          {
-          	struct audit_fsnotify_mark *mark;
-          	struct fsnotify_mark *entry;
-
-          	fsnotify_group_lock(audit_fsnotify_group);
-          	list_for_each_entry(entry, &audit_fsnotify_group->marks_list, g_list) {
-          		mark = container_of(entry, struct audit_fsnotify_mark, mark);
-          		if (audit_mark_compare(mark, ino, dev)) {
-          			fsnotify_get_mark(entry);
-          			fsnotify_group_unlock(audit_fsnotify_group);
-          			return mark;
-          		}
-          	}
-          	fsnotify_group_unlock(audit_fsnotify_group);
-          	return NULL;
           }
 
           void audit_remove_mark(struct audit_fsnotify_mark *audit_mark)
