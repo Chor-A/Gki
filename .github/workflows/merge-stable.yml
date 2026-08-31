@@ -43,19 +43,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout CloudFox-Kernel (fast, cloudfox tree only)
+      - name: Checkout Templar-Kernel (fast, local tree only)
         uses: actions/checkout@v5
         with:
           repository: Chor-A/Templar-Kernel-GKI-5.10
-          ref: android12-5.10-stable
+          ref: Linux7-Staging
           token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 1
           filter: blob:none
 
       - name: Configure git (global identity)
         run: |
-          git config user.name "CloudFox-INC"
-          git config user.email "CloudFox_INC@proton.me"
+          git config user.name "Chor-A"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config commit.gpgsign false
           git config tag.gpgsign false
           git config rerere.enabled true
@@ -66,7 +66,7 @@ jobs:
           set -e
           commit="${{ inputs.revert_commit }}"
           echo "Reverting to $commit with depth 1"
-          git fetch --depth=1 origin "$commit" 2>&1 | tail -n 5 || git fetch --depth=1 origin android12-5.10-stable 2>&1 | tail -n 5 || true
+          git fetch --depth=1 origin "$commit" 2>&1 | tail -n 5 || git fetch --depth=1 origin Linux7-Staging 2>&1 | tail -n 5 || true
           # try to checkout the commit directly (may need full fetch of that object)
           git fetch --depth=1 origin "$commit" 2>&1 | tail -n 5 || true
           git checkout --force "$commit" 2>&1 | tail -n 5 || git reset --hard "$commit" 2>&1 | tail -n 5 || { echo "::error::cannot checkout $commit"; exit 1; }
@@ -75,7 +75,7 @@ jobs:
             echo "dry_run revert, not pushing"
             exit 0
           fi
-          git push --force-with-lease origin HEAD:android12-5.10-stable 2>&1 | tail -n 20
+          git push --force-with-lease origin HEAD:Linux7-Staging 2>&1 | tail -n 20
           echo "reverted to $(git rev-parse --short HEAD)"
 
       - name: Revert commit (create revert commit, no force, preserves history)
@@ -125,7 +125,7 @@ jobs:
             git reset --hard HEAD~1 2>/dev/null || true
             exit 0
           fi
-          git push origin HEAD:android12-5.10-stable 2>&1 | tail -n 20
+          git push origin HEAD:Linux7-Staging 2>&1 | tail -n 20
           echo "reverted $commit via revert commit $(git rev-parse --short HEAD) (no force)"
 
       - name: Add remotes and fetch deterministic (actual needed history, stable + cloudfox only)
@@ -138,7 +138,7 @@ jobs:
           git remote add stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git || git remote set-url stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
           git remote add stable-mirror https://github.com/gregkh/linux.git || git remote set-url stable-mirror https://github.com/gregkh/linux.git
           echo "Fetching cloudfox tree shallow init (fast)..."
-          git fetch --depth="$init_depth" --filter=blob:none origin android12-5.10-stable
+          git fetch --depth="$init_depth" --filter=blob:none origin Linux7-Staging
           echo "Fetching stable linux-5.10.y shallow init only (primary: kernel.org, fallback: github mirror lagging)..."
           # primary kernel.org with 3 retries, fallback to mirror only if primary fails (mirror is lagging)
           _fetched=false
@@ -159,7 +159,7 @@ jobs:
               echo "::warning::no merge-base within max_depth $max_depth"
               # fallback: fetch full history with blob filter (still shallow on blobs, not full 3GB)
               echo "Falling back to --unshallow --filter=blob:none for correct merge-base"
-              git fetch --unshallow --filter=blob:none origin android12-5.10-stable 2>&1 | tail -n 5 || true
+              git fetch --unshallow --filter=blob:none origin Linux7-Staging 2>&1 | tail -n 5 || true
               # try kernel.org first, then mirror fallback (lagging)
               git fetch --unshallow --filter=blob:none stable linux-5.10.y 2>&1 | tail -n 5; _ec=${PIPESTATUS[0]}
               if [ $_ec -ne 0 ]; then
@@ -171,7 +171,7 @@ jobs:
             cur=$((cur + step))
             if [ "$cur" -gt "$max_depth" ]; then cur="$max_depth"; fi
             echo "No merge-base yet, deepening to $cur..."
-            git fetch --deepen="$step" origin android12-5.10-stable 2>&1 | tail -n 5 || true
+            git fetch --deepen="$step" origin Linux7-Staging 2>&1 | tail -n 5 || true
             # deepen stable: 3 retries on kernel.org, then mirror fallback
             _deep_ok=false
             for i in 1 2 3; do
@@ -190,7 +190,7 @@ jobs:
           # if strategy=merge and shallow, unshallow with filter to avoid "did not receive expected object"
           if [ "${{ inputs.strategy || 'merge' }}" = "merge" ] && [ -f .git/shallow ]; then
             echo "Merge strategy with shallow may fail push (bc1d99ba), unshallowing with blob filter for deterministic push..."
-            git fetch --unshallow --filter=blob:none origin android12-5.10-stable 2>&1 | tail -n 5 || true
+            git fetch --unshallow --filter=blob:none origin Linux7-Staging 2>&1 | tail -n 5 || true
             # stable unshallow with retries + mirror fallback
             _unshallow_ok=false
             for i in 1 2 3; do
@@ -238,7 +238,7 @@ jobs:
           strategy="${{ inputs.strategy || 'cherry-pick' }}"
           echo "strategy=$strategy"
           if [ "$strategy" = "merge" ]; then
-            git merge --no-ff stable/linux-5.10.y -m "Merge linux-5.10.y $(git rev-parse --short stable/linux-5.10.y) into android12-5.10-stable" 2>&1 | tee /tmp/merge.log
+            git merge --no-ff stable/linux-5.10.y -m "Merge linux-5.10.y $(git rev-parse --short stable/linux-5.10.y) into Linux7-Staging" 2>&1 | tee /tmp/merge.log
             ec=${PIPESTATUS[0]}
           else
             # cherry-pick linearizes: 5.10.266 + reverts etc. Use -m 1 for merges
@@ -306,7 +306,7 @@ jobs:
             echo "You are a kernel merge resolver." > prompt.txt
             if [ -n "$extra" ]; then
               echo "$extra" >> prompt.txt
-              echo "FOCUS ON FOLLOWING STABLE (stable/linux-5.10.y) but do a proper backport for android12-5.10 - adapt APIs if needed. Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>>. For version bumps (SUBLEVEL) take higher. Remove markers, return ONLY file content, no markdown, no explanation." >> prompt.txt
+              echo "FOCUS ON FOLLOWING STABLE (stable/linux-5.10.y) but do a proper backport for Linux7-Staging - adapt APIs if needed. Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>>. For version bumps (SUBLEVEL) take higher. Remove markers, return ONLY file content, no markdown, no explanation." >> prompt.txt
             else
               echo "FOCUS ON FOLLOWING STABLE (stable/linux-5.10.y) - ALWAYS prefer stable/theirs side. Resolve git merge conflict markers <<<<<<< HEAD, =======, >>>>>>>. For version bumps (SUBLEVEL) take higher. For code, ALWAYS take stable side if it adds safety checks. Remove markers, return ONLY file content, no markdown, no explanation." >> prompt.txt
             fi
@@ -330,7 +330,7 @@ jobs:
             resp=$(curl -s https://openrouter.ai/api/v1/chat/completions \
               -H "Authorization: Bearer $OPENROUTER_API_KEY" \
               -H "Content-Type: application/json" \
-              -H "HTTP-Referer: https://github.com/Chor-A/Templar-Kernel-GKI-5.10" \
+              -H "HTTP-Referer: https://github.com/Chor-A/Gki" \
               -d @api_payload.json)
             
             printf "%s\n" "${resp:0:2000}"
@@ -344,6 +344,7 @@ jobs:
               resp2=$(curl -s https://openrouter.ai/api/v1/chat/completions \
                 -H "Authorization: Bearer $OPENROUTER_API_KEY" \
                 -H "Content-Type: application/json" \
+                -H "HTTP-Referer: https://github.com/Chor-A/Gki" \
                 -d @fallback_payload.json)
               resolved=$(echo "$resp2" | jq -r '.choices[0].message.content // empty')
             fi
@@ -425,7 +426,7 @@ jobs:
             git diff --name-only --diff-filter=U | head -n 20 || true
             exit 1
           fi
-          git push origin android12-5.10-stable || git push --force-with-lease origin android12-5.10-stable
+          git push origin Linux7-Staging || git push --force-with-lease origin Linux7-Staging
           echo "pushed $(git rev-parse --short HEAD)"
 
       - name: Summary
