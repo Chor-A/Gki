@@ -1,40 +1,72 @@
 --- a/security/selinux/ss/services.c
 +++ b/security/selinux/ss/services.c
-@@ -839,6 +839,34 @@ void security_compute_av_user(struct selinux_state *state,
+@@ -32,6 +32,8 @@
+ #include <linux/audit.h>
+ #include <linux/vmalloc.h>
+ #include <net/netlabel.h>
++#include <linux/cred.h>
++#include <linux/uidgid.h>
+ 
+ #include "flask.h"
+ #include "avc.h"
+@@ -862,6 +864,40 @@ void security_compute_av_user(struct selinux_state *state,
  
  	context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
  				  NULL);
 +
 +	/*
-+	 * INJECTED KERNEL RULES - Spoof Userspace Checkers
-+	 * By hooking security_compute_av_user instead of the core engine,
-+	 * we ONLY lie to userspace apps querying android.os.SELinux.checkSELinuxAccess.
-+	 * Actual kernel enforcement remains completely unbroken, so your system
-+	 * remains stable and 'su' continues to function normally.
++	 * INJECTED KERNEL RULES - Defeat API Checkers (e.g., Momo, TB Checker)
++	 * By hooking here, we intercept android.os.SELinux.checkSELinuxAccess
++	 * and lie to the app, making dirty rules appear denied without breaking root.
 +	 */
 +	if (unlikely(avd->allowed)) {
-+		const char *s_type = sym_name(policydb, SYM_TYPES, scontext->type - 1);
-+		const char *t_type = sym_name(policydb, SYM_TYPES, tcontext->type - 1);
-+		const char *t_class = sym_name(policydb, SYM_CLASSES, tclass - 1);
++		/* Mathematically prevent out-of-bounds memory panics */
++		if (scontext->type > 0 && scontext->type <= policydb->p_types.nprim &&
++		    tcontext->type > 0 && tcontext->type <= policydb->p_types.nprim &&
++		    tclass > 0 && tclass <= policydb->p_classes.nprim) {
++			
++			const char *s_type = sym_name(policydb, SYM_TYPES, scontext->type - 1);
++			const char *t_type = sym_name(policydb, SYM_TYPES, tcontext->type - 1);
++			const char *t_cls  = sym_name(policydb, SYM_CLASSES, tclass - 1);
++			bool spoof_deny = false;
 +
-+		if (s_type && t_type && t_class) {
-+			/* Rule 1: fsck_untrusted -> fsck_untrusted (capability) */
-+			if (strcmp(t_class, "capability") == 0 &&
-+			    strcmp(s_type, "fsck_untrusted") == 0 &&
-+			    strcmp(t_type, "fsck_untrusted") == 0)
++			if (s_type && t_type && t_cls) {
++				if (strcmp(t_cls, "capability") == 0 &&
++				    strcmp(s_type, "fsck_untrusted") == 0 &&
++				    strcmp(t_type, "fsck_untrusted") == 0)
++					spoof_deny = true;
++				else if (strcmp(t_cls, "binder") == 0 &&
++				    strcmp(s_type, "adbd") == 0 &&
++				    strcmp(t_type, "adbroot") == 0)
++					spoof_deny = true;
++				else if (strcmp(t_cls, "process") == 0 &&
++				    strcmp(s_type, "shell") == 0 &&
++				    strcmp(t_type, "su") == 0)
++					spoof_deny = true;
++			}
++
++			/* Restore audit metadata to mimic an authentic stock denial */
++			if (spoof_deny) {
 +				avd->allowed = 0;
-+			/* Rule 2: adbd -> adbroot (binder) */
-+			else if (strcmp(t_class, "binder") == 0 &&
-+			    strcmp(s_type, "adbd") == 0 &&
-+			    strcmp(t_type, "adbroot") == 0)
-+				avd->allowed = 0;
-+			/* Rule 3: shell -> su (process) */
-+			else if (strcmp(t_class, "process") == 0 &&
-+			    strcmp(s_type, "shell") == 0 &&
-+			    strcmp(t_type, "su") == 0)
-+				avd->allowed = 0;
++				avd->auditallow = 0;
++				avd->auditdeny = 0xffffffff;
++			}
 +		}
 +	}
   out:
  	rcu_read_unlock();
  	return;
+@@ -4079,6 +4115,13 @@ int security_read_policy(struct selinux_state *state,
+ 	int rc;
+ 	struct policy_file fp;
+ 
++	/*
++	 * INJECTED RULE - Binary Policy Dump Bypass
++	 * Force untrusted Android apps (UID >= 10000) to fall back to the API checker.
++	 */
++	if (__kuid_val(current_uid()) >= 10000)
++		return -EACCES;
++
+ 	policy = rcu_dereference_protected(
+ 			state->policy, lockdep_is_held(&state->policy_mutex));
+ 	if (!policy)
