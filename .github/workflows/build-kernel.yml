@@ -128,7 +128,7 @@ jobs:
           
           git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
 
-      - name: Apply SUSFS, Spoofs, Manual NoMount, MGLRU & KernelSU-Next
+      - name: Apply SUSFS, Custom Patches, Manual NoMount & KernelSU-Next
         run: |
           cd work/common
 
@@ -138,19 +138,19 @@ jobs:
           cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue"
 
-          echo "=== 2. Applying Full Complete Spoof Patch ==="
-          SPOOF_PATCH="$GITHUB_WORKSPACE/.github/workflows/patches/full_complete_spoof.patch"
-          if [ ! -f "$SPOOF_PATCH" ]; then
-            SPOOF_PATCH="$GITHUB_WORKSPACE/patches/full_complete_spoof.patch"
-          fi
-          if [ -f "$SPOOF_PATCH" ]; then
-            sed -i 's/\r$//' "$SPOOF_PATCH"
-            patch -p1 -N --no-backup-if-mismatch < "$SPOOF_PATCH" || echo "Spoof patch partially skipped"
-            echo "✅ Spoofs dynamically injected."
-          else
-            echo "❌ ERROR: full_complete_spoof.patch not found!"
-            exit 1
-          fi
+          echo "=== 2. Applying Custom Patches (.patch files) ==="
+          for dir in "$GITHUB_WORKSPACE/.github/workflows/patches" "$GITHUB_WORKSPACE/patches"; do
+            if [ -d "$dir" ]; then
+              for patch_file in "$dir"/*.patch; do
+                if [ -f "$patch_file" ]; then
+                  echo "Applying $patch_file..."
+                  sed -i 's/\r$//' "$patch_file"
+                  git apply --verbose --ignore-whitespace --whitespace=nowarn "$patch_file" || patch -p1 -N --no-backup-if-mismatch < "$patch_file" || echo "Warning: $patch_file partially skipped or failed"
+                fi
+              done
+            fi
+          done
+          echo "✅ All custom patches dynamically injected."
 
           echo "=== 3. Setting up NoMount (Manual Method) ==="
           git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
@@ -160,18 +160,7 @@ jobs:
           grep -q 'nomount/' fs/Makefile || echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
           echo "CONFIG_NOMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
-          echo "=== 4. Applying MGLRU Patch ==="
-          MGLRU_PATH="$GITHUB_WORKSPACE/.github/workflows/patches/mglru.patch"
-          if [ ! -f "$MGLRU_PATH" ]; then
-            MGLRU_PATH="$GITHUB_WORKSPACE/patches/mglru.patch"
-          fi
-          if [ -f "$MGLRU_PATH" ]; then
-            sed -i 's/\r$//' "$MGLRU_PATH"
-            git apply --verbose --ignore-whitespace --whitespace=nowarn "$MGLRU_PATH" || patch -p1 -N < "$MGLRU_PATH"
-            echo "MGLRU Patch applied successfully!"
-          fi
-
-          echo "=== 5. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
+          echo "=== 4. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
 
           sed -i 's/CONFIG_KSU=m/CONFIG_KSU=y/g' arch/arm64/configs/gki_defconfig || true
