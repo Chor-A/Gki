@@ -1,0 +1,40 @@
+--- a/security/selinux/ss/services.c
++++ b/security/selinux/ss/services.c
+@@ -839,6 +839,34 @@ void security_compute_av_user(struct selinux_state *state,
+ 
+ 	context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
+ 				  NULL);
++
++	/*
++	 * INJECTED KERNEL RULES - Spoof Userspace Checkers
++	 * By hooking security_compute_av_user instead of the core engine,
++	 * we ONLY lie to userspace apps querying android.os.SELinux.checkSELinuxAccess.
++	 * Actual kernel enforcement remains completely unbroken, so your system
++	 * remains stable and 'su' continues to function normally.
++	 */
++	if (unlikely(avd->allowed)) {
++		const char *s_type = sym_name(policydb, SYM_TYPES, scontext->type - 1);
++		const char *t_type = sym_name(policydb, SYM_TYPES, tcontext->type - 1);
++		const char *t_class = sym_name(policydb, SYM_CLASSES, tclass - 1);
++
++		if (s_type && t_type && t_class) {
++			/* Rule 1: fsck_untrusted -> fsck_untrusted (capability) */
++			if (strcmp(t_class, "capability") == 0 &&
++			    strcmp(s_type, "fsck_untrusted") == 0 &&
++			    strcmp(t_type, "fsck_untrusted") == 0)
++				avd->allowed = 0;
++			/* Rule 2: adbd -> adbroot (binder) */
++			else if (strcmp(t_class, "binder") == 0 &&
++			    strcmp(s_type, "adbd") == 0 &&
++			    strcmp(t_type, "adbroot") == 0)
++				avd->allowed = 0;
++			/* Rule 3: shell -> su (process) */
++			else if (strcmp(t_class, "process") == 0 &&
++			    strcmp(s_type, "shell") == 0 &&
++			    strcmp(t_type, "su") == 0)
++				avd->allowed = 0;
++		}
++	}
+  out:
+ 	rcu_read_unlock();
+ 	return;
