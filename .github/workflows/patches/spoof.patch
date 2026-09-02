@@ -71,7 +71,7 @@
  }
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -9,20 +9,74 @@
+@@ -9,21 +9,75 @@
  #include <linux/seq_file.h>
  #include <linux/bootconfig.h>
  #include <linux/slab.h>
@@ -97,8 +97,9 @@
 +		p += r_len;
 +	}
 +}
- 
++
  #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
++#include <linux/susfs.h>
  extern int susfs_spoof_bootconfig(struct seq_file *m);
  #endif
  
