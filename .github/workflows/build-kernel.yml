@@ -129,6 +129,8 @@ jobs:
           git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
 
       - name: Apply SUSFS, Custom Patches, Manual NoMount & KernelSU-Next
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           cd work/common
 
@@ -146,12 +148,81 @@ jobs:
                   echo "Applying $patch_file..."
                   sed -i 's/\r$//' "$patch_file"
                   sed -i 's/^$/ /g' "$patch_file"
-                  git apply --verbose --ignore-whitespace --whitespace=nowarn "$patch_file" || patch -p1 -N --no-backup-if-mismatch < "$patch_file" || echo "Warning: $patch_file partially skipped or failed"
+                  
+                  if git apply --verbose --ignore-whitespace --whitespace=nowarn "$patch_file"; then
+                    echo "Applied via git apply"
+                  elif patch -p1 -N --no-backup-if-mismatch < "$patch_file"; then
+                    echo "Applied via patch"
+                  else
+                    echo "Warning: $patch_file partially skipped or failed"
+                    
+                    # AI AUTO-RESOLVE LOGIC FOR SPOOF PATCH
+                    if [[ "$patch_file" == *"spoof.patch" ]] && [ -n "$OPENROUTER_API_KEY" ]; then
+                      echo "Attempting AI auto-resolution for $patch_file via OpenRouter..."
+                      sudo apt-get update -qq && sudo apt-get install -y jq || true
+                      
+                      # Restore files to clean state before AI modification
+                      git checkout fs/proc/cmdline.c fs/proc/bootconfig.c fs/proc/array.c 2>/dev/null || true
+                      
+                      for target_file in fs/proc/cmdline.c fs/proc/bootconfig.c fs/proc/array.c; do
+                        echo "=== AI Resolving $target_file ==="
+                        echo "You are an expert Linux kernel C developer. I have a patch file that failed to apply cleanly to a C source file. Please output ONLY the fully updated C source file with the intended changes from the patch applied manually to the original file. Do not include markdown formatting or explanations." > prompt.txt
+                        echo -e "\n--- ORIGINAL FILE ($target_file) ---\n" >> prompt.txt
+                        cat "$target_file" >> prompt.txt
+                        echo -e "\n--- PATCH CONTENT ($patch_file) ---\n" >> prompt.txt
+                        cat "$patch_file" >> prompt.txt
+
+                        jq -n --arg prompt "$(cat prompt.txt)" '{
+                          model: "nvidia/nemotron-3-ultra-550b-a55b:free",
+                          models: ["z-ai/glm-5.2:free"],
+                          messages: [
+                            {role: "system", content: "Output ONLY the modified C file content. No markdown formatting, no code blocks, no explanations."},
+                            {role: "user", content: $prompt}
+                          ],
+                          temperature: 0.1,
+                          max_tokens: 65536
+                        }' > api_payload.json
+
+                        resp=$(curl -s https://openrouter.ai/api/v1/chat/completions \
+                          -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+                          -H "Content-Type: application/json" \
+                          -H "HTTP-Referer: https://github.com/Chor-A/Gki" \
+                          -d @api_payload.json)
+                        
+                        resolved=$(echo "$resp" | jq -r '.choices[0].message.content // empty' || true)
+                        
+                        if [ -z "$resolved" ] || [ "$resolved" = "null" ]; then
+                          echo "nvidia/nemotron returned empty, trying fallback z-ai/glm-5.2:free"
+                          jq -n --arg prompt "$(cat prompt.txt)" '{model: "z-ai/glm-5.2:free", messages: [{role: "system", content: "Output ONLY the modified C file content. No markdown formatting."}], temperature: 0.1}' > fallback_payload.json
+                          resp2=$(curl -s https://openrouter.ai/api/v1/chat/completions \
+                            -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+                            -H "Content-Type: application/json" \
+                            -H "HTTP-Referer: https://github.com/Chor-A/Gki" \
+                            -d @fallback_payload.json)
+                          resolved=$(echo "$resp2" | jq -r '.choices[0].message.content // empty')
+                        fi
+
+                        if [ -n "$resolved" ] && [ "$resolved" != "null" ]; then
+                          echo "$resolved" | sed -e 's/^```.*//g' -e 's/^```//g' > "$target_file.tmp"
+                          if [ $(wc -c < "$target_file.tmp") -gt 50 ]; then
+                            mv "$target_file.tmp" "$target_file"
+                            echo "AI successfully applied changes to $target_file"
+                          else
+                            echo "AI output too small, keeping original $target_file"
+                            rm -f "$target_file.tmp"
+                          fi
+                        else
+                          echo "AI failed to process $target_file"
+                        fi
+                      done
+                      rm -f prompt.txt api_payload.json fallback_payload.json
+                    fi
+                  fi
                 fi
               done
             fi
           done
-          echo "✅ All custom patches dynamically injected."
+          echo "✅ All custom patches dynamically injected (with AI fallback if needed)."
 
           echo "=== 3. Setting up NoMount (Manual Method) ==="
           git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
