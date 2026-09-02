@@ -1,6 +1,6 @@
 --- a/security/selinux/ss/services.c
 +++ b/security/selinux/ss/services.c
-@@ -836,8 +836,29 @@ void security_compute_av_user(struct selinux_state *state,
+@@ -836,8 +836,31 @@ void security_compute_av_user(struct selinux_state *state,
  		goto out;
  	}
  
