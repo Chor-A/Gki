@@ -138,9 +138,10 @@ jobs:
           cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue"
 
-          echo "=== 2. Directly Injecting Spoof Modifications via Python ==="
+          echo "=== 2. Directly Injecting Spoof Modifications via Python (Robust Regex) ==="
           python3 - << 'EOF'
           import os
+          import re
 
           # 1. Modify fs/proc/cmdline.c
           cmdline_path = "fs/proc/cmdline.c"
@@ -174,13 +175,6 @@ jobs:
           }
           """
               
-              target_func = """static int cmdline_proc_show(struct seq_file *m, void *v)
-          {
-          	seq_puts(m, saved_command_line);
-          	seq_putc(m, '\\n');
-          	return 0;
-          }"""
-
               replacement_func = """static int cmdline_proc_show(struct seq_file *m, void *v)
           {
           	char *buf;
@@ -223,13 +217,14 @@ jobs:
           	return 0;
           }"""
 
-              if target_func in content:
-                  content = helper_code + "\n" + content.replace(target_func, replacement_func)
+              pattern = r'static int cmdline_proc_show\(struct seq_file \*m, void \*v\)\s*\{.*?\n\}'
+              if re.search(pattern, content, re.DOTALL):
+                  content = helper_code + "\n" + re.sub(pattern, replacement_func, content, flags=re.DOTALL)
                   with open(cmdline_path, "w") as f:
                       f.write(content)
                   print("Successfully spoofed fs/proc/cmdline.c")
               else:
-                  print("Error: Target func not found in cmdline.c")
+                  print("Error: Target func not found in cmdline.c via regex")
 
           # 2. Modify fs/proc/bootconfig.c
           boot_path = "fs/proc/bootconfig.c"
@@ -261,13 +256,6 @@ jobs:
           	}
           }
           """
-
-              boot_target = """static int boot_config_proc_show(struct seq_file *m, void *v)
-          {
-          	if (saved_boot_config)
-          		seq_puts(m, saved_boot_config);
-          	return 0;
-          }"""
 
               boot_replacement = """static int boot_config_proc_show(struct seq_file *m, void *v)
           {
@@ -304,13 +292,14 @@ jobs:
           	return 0;
           }"""
 
-              if boot_target in boot_content:
-                  boot_content = boot_helper + "\n" + boot_content.replace(boot_target, boot_replacement)
+              boot_pattern = r'static int boot_config_proc_show\(struct seq_file \*m, void \*v\)\s*\{.*?\n\}'
+              if re.search(boot_pattern, boot_content, re.DOTALL):
+                  boot_content = boot_helper + "\n" + re.sub(boot_pattern, boot_replacement, boot_content, flags=re.DOTALL)
                   with open(boot_path, "w") as f:
                       f.write(boot_content)
                   print("Successfully spoofed fs/proc/bootconfig.c")
               else:
-                  print("Error: Target func not found in bootconfig.c")
+                  print("Error: Target func not found in bootconfig.c via regex")
 
           # 3. Modify fs/proc/array.c
           array_path = "fs/proc/array.c"
@@ -332,7 +321,7 @@ jobs:
                   f.write(array_content)
               print("Successfully spoofed fs/proc/array.c")
           EOF
-          echo "✅ Python direct injection completed successfully!"
+          echo "✅ Python regex injection completed successfully!"
 
           echo "=== 3. Setting up NoMount (Manual Method) ==="
           git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
