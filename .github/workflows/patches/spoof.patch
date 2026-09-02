@@ -31,35 +31,45 @@
  	return 0;
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -9,11 +9,32 @@
+@@ -9,19 +9,42 @@
  #include <linux/seq_file.h>
  #include <linux/bootconfig.h>
  #include <linux/slab.h>
 +#include <linux/string.h>
  
+ #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+ extern int susfs_spoof_bootconfig(struct seq_file *m);
+ #endif
+ 
  static char *saved_boot_config;
  
  static int boot_config_proc_show(struct seq_file *m, void *v)
  {
-+	char *p;
-+	char *buf = kstrdup(saved_boot_config, GFP_KERNEL);
-+	if (buf) {
-+		if ((p = strstr(buf, "androidboot.verifiedbootstate=orange"))) memcpy(p + 30, "green ", 6);
-+		if ((p = strstr(buf, "androidboot.verifiedbootstate=yellow"))) memcpy(p + 30, "green ", 6);
-+		if ((p = strstr(buf, "androidboot.vbmeta.device_state=unlocked"))) memcpy(p + 32, "locked  ", 8);
-+		if ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);
-+		if ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);
-+		if ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);
-+		if ((p = strstr(buf, "buildvariant=eng "))) memcpy(p + 13, "user", 4);
-+		if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
-+		if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
-+		if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
-+		if ((p = strstr(buf, "\"orange\""))) memcpy(p + 1, "green\" ", 7);
-+		if ((p = strstr(buf, "\"yellow\""))) memcpy(p + 1, "green\" ", 7);
-+		if ((p = strstr(buf, "\"unlocked\""))) memcpy(p + 1, "locked\"  ", 9);
-+		seq_puts(m, buf);
-+		kfree(buf);
-+		return 0;
+ #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+ 	if (!susfs_spoof_bootconfig(m))
+ 		return 0;
+ #endif
++	{
++		char *p;
++		char *buf = kstrdup(saved_boot_config, GFP_KERNEL);
++		if (buf) {
++			if ((p = strstr(buf, "androidboot.verifiedbootstate=orange"))) memcpy(p + 30, "green ", 6);
++			if ((p = strstr(buf, "androidboot.verifiedbootstate=yellow"))) memcpy(p + 30, "green ", 6);
++			if ((p = strstr(buf, "androidboot.vbmeta.device_state=unlocked"))) memcpy(p + 32, "locked  ", 8);
++			if ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);
++			if ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);
++			if ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);
++			if ((p = strstr(buf, "buildvariant=eng "))) memcpy(p + 13, "user", 4);
++			if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
++			if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
++			if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
++			if ((p = strstr(buf, "\"orange\""))) memcpy(p + 1, "green\" ", 7);
++			if ((p = strstr(buf, "\"yellow\""))) memcpy(p + 1, "green\" ", 7);
++			if ((p = strstr(buf, "\"unlocked\""))) memcpy(p + 1, "locked\"  ", 9);
++			seq_puts(m, buf);
++			kfree(buf);
++			return 0;
++		}
 +	}
  	if (saved_boot_config)
  		seq_puts(m, saved_boot_config);
