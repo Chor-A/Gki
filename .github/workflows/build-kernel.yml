@@ -138,7 +138,7 @@ jobs:
           cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue"
 
-          echo "=== 2. Directly Injecting Spoof Modifications via Python (Robust Regex + Raw Strings) ==="
+          echo "=== 2. Directly Injecting Spoof Modifications via Python (ASCII 10 Fix) ==="
           python3 - << 'EOF'
           import os
           import re
@@ -181,7 +181,7 @@ jobs:
           	size_t len;
 
           	if (!saved_command_line) {
-          		seq_putc(m, '\n');
+          		seq_putc(m, 10);
           		return 0;
           	}
 
@@ -208,12 +208,12 @@ jobs:
           		replace_str(buf, len + 256, "androidboot.force_normal_boot=0", "androidboot.force_normal_boot=1");
           		seq_puts(m, buf);
           		kfree(buf);
-          		seq_putc(m, '\n');
+          		seq_putc(m, 10);
           		return 0;
           	}
 
           	seq_puts(m, saved_command_line);
-          	seq_putc(m, '\n');
+          	seq_putc(m, 10);
           	return 0;
           }"""
 
@@ -581,7 +581,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="$RELEASE_TAG"
-          if [ -z "$tag" -> ]; then
+          if [ -z "$tag" ]; then
             tag="kernel-$(date -u +%Y%m%d-%H%M)"
           fi
           
