@@ -42,22 +42,12 @@
  }
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -11,10 +11,36 @@
+@@ -11,2 +11,3 @@
  #include <linux/slab.h>
 +#include <linux/string.h>
-+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
-+#include <linux/susfs.h>
-+#endif
  
- static char *saved_boot_config;
- 
- static int boot_config_proc_show(struct seq_file *m, void *v)
+@@ -16,2 +17,24 @@ static int boot_config_proc_show(struct seq_file *m, void *v)
  {
-+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
-+	if (susfs_is_bootconfig_proc_show_spoofed(m, v)) {
-+		return 0;
-+	}
-+#endif
 +	char *p;
 +	char *buf = kstrdup(saved_boot_config, GFP_KERNEL);
 +	if (buf) {
@@ -80,5 +70,3 @@
 +	}
  	if (saved_boot_config)
  		seq_puts(m, saved_boot_config);
- 	return 0;
- }
