@@ -128,7 +128,7 @@ jobs:
           
           git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
 
-      - name: Apply SUSFS, Manual NoMount & Direct Code Spoofing
+      - name: Apply SUSFS, Custom Patches, Manual NoMount & Direct Code Spoofing
         run: |
           cd work/common
 
@@ -138,7 +138,28 @@ jobs:
           cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue"
 
-          echo "=== 2. Directly Injecting Spoof Modifications via Python (UID-Check + ASCII 10 Fix) ==="
+          echo "=== 2. Applying Custom Patches (mglru, services, etc.) ==="
+          for dir in "$GITHUB_WORKSPACE/.github/workflows/patches" "$GITHUB_WORKSPACE/patches"; do
+            if [ -d "$dir" ]; then
+              for patch_file in "$dir"/*.patch; do
+                if [ -f "$patch_file" ]; then
+                  echo "Applying $patch_file..."
+                  sed -i 's/\r$//' "$patch_file"
+                  sed -i 's/^$/ /g' "$patch_file"
+                  if git apply --verbose --ignore-whitespace --whitespace=nowarn "$patch_file"; then
+                    echo "Applied via git apply"
+                  elif patch -p1 -N --no-backup-if-mismatch < "$patch_file"; then
+                    echo "Applied via patch"
+                  else
+                    echo "Warning: $patch_file partially skipped or failed"
+                  fi
+                fi
+              done
+            fi
+          done
+          echo "✅ All .patch files applied!"
+
+          echo "=== 3. Directly Injecting Spoof Modifications via Python ==="
           python3 - << 'EOF'
           import os
           import re
@@ -329,7 +350,7 @@ jobs:
           EOF
           echo "✅ Python regex injection with UID-checks completed successfully!"
 
-          echo "=== 3. Setting up NoMount (Manual Method) ==="
+          echo "=== 4. Setting up NoMount (Manual Method) ==="
           git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
           mkdir -p fs/nomount
           cp -f ../nomount_repo/kernel/src/* fs/nomount/
@@ -337,7 +358,7 @@ jobs:
           grep -q 'nomount/' fs/Makefile || echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
           echo "CONFIG_NOMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
-          echo "=== 4. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
+          echo "=== 5. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
 
           sed -i 's/CONFIG_KSU=m/CONFIG_KSU=y/g' arch/arm64/configs/gki_defconfig || true
