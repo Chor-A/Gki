@@ -43,7 +43,8 @@
  }
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -11,17 +11,39 @@
+@@ -10,18 +10,40 @@
+ #include <linux/bootconfig.h>
  #include <linux/slab.h>
 +#include <linux/string.h>
  #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
