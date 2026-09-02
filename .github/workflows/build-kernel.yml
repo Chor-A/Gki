@@ -145,6 +145,7 @@ jobs:
                 if [ -f "$patch_file" ]; then
                   echo "Applying $patch_file..."
                   sed -i 's/\r$//' "$patch_file"
+                  sed -i 's/^$/ /g' "$patch_file"
                   git apply --verbose --ignore-whitespace --whitespace=nowarn "$patch_file" || patch -p1 -N --no-backup-if-mismatch < "$patch_file" || echo "Warning: $patch_file partially skipped or failed"
                 fi
               done
