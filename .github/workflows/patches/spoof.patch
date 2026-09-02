@@ -1,6 +1,6 @@
 --- a/fs/proc/cmdline.c
 +++ b/fs/proc/cmdline.c
-@@ -3,10 +3,71 @@
+@@ -3,10 +3,68 @@
  #include <linux/init.h>
  #include <linux/proc_fs.h>
  #include <linux/seq_file.h>
@@ -71,7 +71,7 @@
  }
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -9,12 +9,74 @@
+@@ -9,12 +9,66 @@
  #include <linux/seq_file.h>
  #include <linux/bootconfig.h>
  #include <linux/slab.h>
@@ -140,7 +140,7 @@
  }
 --- a/fs/proc/array.c
 +++ b/fs/proc/array.c
-@@ -80,6 +80,7 @@
+@@ -88,6 +88,7 @@
  #include <linux/string_helpers.h>
  #include <linux/user_namespace.h>
  #include <linux/fs_struct.h>
@@ -148,7 +148,7 @@
  
  #include <asm/processor.h>
  #include "internal.h"
-@@ -166,10 +167,17 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
+@@ -180,11 +181,17 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
  	if (p->files)
  		max_fds = files_fdtable(p->files)->max_fds;
  	task_unlock(p);
@@ -166,7 +166,9 @@
  	seq_puts(m, get_task_state(p));
  
  	seq_put_decimal_ull(m, "\nTgid:\t", tgid);
-@@ -404,6 +412,11 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
+@@ -361,8 +368,13 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
+ 	ret = down_read_killable(&task->signal->exec_update_lock);
+ 	if (ret)
  		return ret;
  
  	state = *get_task_state(task);
