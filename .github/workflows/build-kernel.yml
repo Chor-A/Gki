@@ -138,7 +138,7 @@ jobs:
           cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue"
 
-          echo "=== 2. Directly Injecting Spoof Modifications via Python (Robust Regex) ==="
+          echo "=== 2. Directly Injecting Spoof Modifications via Python (Robust Regex + Raw Strings) ==="
           python3 - << 'EOF'
           import os
           import re
@@ -149,7 +149,7 @@ jobs:
               with open(cmdline_path, "r") as f:
                   content = f.read()
               
-              helper_code = """
+              helper_code = r"""
           #include <linux/slab.h>
           #include <linux/string.h>
 
@@ -175,13 +175,13 @@ jobs:
           }
           """
               
-              replacement_func = """static int cmdline_proc_show(struct seq_file *m, void *v)
+              replacement_func = r"""static int cmdline_proc_show(struct seq_file *m, void *v)
           {
           	char *buf;
           	size_t len;
 
           	if (!saved_command_line) {
-          		seq_putc(m, '\\n');
+          		seq_putc(m, '\n');
           		return 0;
           	}
 
@@ -208,12 +208,12 @@ jobs:
           		replace_str(buf, len + 256, "androidboot.force_normal_boot=0", "androidboot.force_normal_boot=1");
           		seq_puts(m, buf);
           		kfree(buf);
-          		seq_putc(m, '\\n');
+          		seq_putc(m, '\n');
           		return 0;
           	}
 
           	seq_puts(m, saved_command_line);
-          	seq_putc(m, '\\n');
+          	seq_putc(m, '\n');
           	return 0;
           }"""
 
@@ -232,7 +232,7 @@ jobs:
               with open(boot_path, "r") as f:
                   boot_content = f.read()
 
-              boot_helper = """
+              boot_helper = r"""
           #include <linux/string.h>
 
           static void replace_xbc_str(char *buf, size_t max_len, const char *search, const char *replace)
@@ -257,7 +257,7 @@ jobs:
           }
           """
 
-              boot_replacement = """static int boot_config_proc_show(struct seq_file *m, void *v)
+              boot_replacement = r"""static int boot_config_proc_show(struct seq_file *m, void *v)
           {
           	if (saved_boot_config) {
           		char *buf;
@@ -266,23 +266,23 @@ jobs:
           		buf = kzalloc(len + 256, GFP_KERNEL);
           		if (buf) {
           			memcpy(buf, saved_boot_config, len + 1);
-          			replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \\"orange\\"", "androidboot.verifiedbootstate = \\"green\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \\"yellow\\"", "androidboot.verifiedbootstate = \\"green\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \\"red\\"", "androidboot.verifiedbootstate = \\"green\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.vbmeta.device_state = \\"unlocked\\"", "androidboot.vbmeta.device_state = \\"locked\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.flash.locked = \\"0\\"", "androidboot.flash.locked = \\"1\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.selinux = \\"permissive\\"", "androidboot.selinux = \\"enforcing\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.buildvariant = \\"userdebug\\"", "androidboot.buildvariant = \\"user\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.buildvariant = \\"eng\\"", "androidboot.buildvariant = \\"user\\"");
-          			replace_xbc_str(buf, len + 256, "buildvariant = \\"userdebug\\"", "buildvariant = \\"user\\"");
-          			replace_xbc_str(buf, len + 256, "buildvariant = \\"eng\\"", "buildvariant = \\"user\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.mode = \\"custom\\"", "androidboot.mode = \\"normal\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.mode = \\"recovery\\"", "androidboot.mode = \\"normal\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.secureboot = \\"0\\"", "androidboot.secureboot = \\"1\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.lockstate = \\"unlocked\\"", "androidboot.lockstate = \\"locked\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.warranty_bit = \\"1\\"", "androidboot.warranty_bit = \\"0\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.warranty_bits = \\"1\\"", "androidboot.warranty_bits = \\"0\\"");
-          			replace_xbc_str(buf, len + 256, "androidboot.force_normal_boot = \\"0\\"", "androidboot.force_normal_boot = \\"1\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \"orange\"", "androidboot.verifiedbootstate = \"green\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \"yellow\"", "androidboot.verifiedbootstate = \"green\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \"red\"", "androidboot.verifiedbootstate = \"green\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.vbmeta.device_state = \"unlocked\"", "androidboot.vbmeta.device_state = \"locked\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.flash.locked = \"0\"", "androidboot.flash.locked = \"1\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.selinux = \"permissive\"", "androidboot.selinux = \"enforcing\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.buildvariant = \"userdebug\"", "androidboot.buildvariant = \"user\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.buildvariant = \"eng\"", "androidboot.buildvariant = \"user\"");
+          			replace_xbc_str(buf, len + 256, "buildvariant = \"userdebug\"", "buildvariant = \"user\"");
+          			replace_xbc_str(buf, len + 256, "buildvariant = \"eng\"", "buildvariant = \"user\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.mode = \"custom\"", "androidboot.mode = \"normal\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.mode = \"recovery\"", "androidboot.mode = \"normal\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.secureboot = \"0\"", "androidboot.secureboot = \"1\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.lockstate = \"unlocked\"", "androidboot.lockstate = \"locked\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.warranty_bit = \"1\"", "androidboot.warranty_bit = \"0\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.warranty_bits = \"1\"", "androidboot.warranty_bits = \"0\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.force_normal_boot = \"0\"", "androidboot.force_normal_boot = \"1\"");
           			seq_puts(m, buf);
           			kfree(buf);
           			return 0;
@@ -581,7 +581,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="$RELEASE_TAG"
-          if [ -z "$tag" ]; then
+          if [ -z "$tag" -> ]; then
             tag="kernel-$(date -u +%Y%m%d-%H%M)"
           fi
           
