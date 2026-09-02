@@ -115,7 +115,7 @@ jobs:
       - name: Clone Kernel & Clean Hardcoded NoMount
         run: |
           mkdir -p work
-          git clone -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} work/common
+          git clone -b ${{ env.KERNEL_BRANCH }}${{ env.KERNEL_REPO }} work/common
           cd work/common
 
           if [ -n "${{ env.KERNEL_COMMIT }}" ]; then
@@ -129,6 +129,8 @@ jobs:
           git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
 
       - name: Apply SUSFS, Custom Patches, Manual NoMount & KernelSU-Next
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           cd work/common
 
@@ -138,14 +140,67 @@ jobs:
           cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue"
 
-          echo "=== 2. Applying Custom Patches (.patch files) ==="
+          echo "=== 2. Applying Custom Patches (.patch files) with AI Fallback ==="
+          sudo apt-get update -qq && sudo apt-get install -y jq || true
           for dir in "$GITHUB_WORKSPACE/.github/workflows/patches" "$GITHUB_WORKSPACE/patches"; do
             if [ -d "$dir" ]; then
               for patch_file in "$dir"/*.patch; do
                 if [ -f "$patch_file" ]; then
                   echo "Applying $patch_file..."
                   sed -i 's/\r$//' "$patch_file"
-                  git apply --verbose --ignore-whitespace --whitespace=nowarn "$patch_file" || patch -p1 -N --no-backup-if-mismatch < "$patch_file" || echo "Warning: $patch_file partially skipped or failed"
+                  
+                  if ! (git apply --verbose --ignore-whitespace --whitespace=nowarn "$patch_file" \vert{}\vert{} patch -p1 -N --no-backup-if-mismatch < "$patch_file"); then
+                    echo "⚠️ Patch $patch_file failed! Finding rejects (.rej) and triggering AI Auto-Patcher..."
+                    
+                    for rej_file in $(find . -name "*.rej"); do
+                      target_file="${rej_file%.rej}"
+                      echo "🤖 === AI Resolving $target_file ==="
+                      
+                      cat << 'EOF' > prompt.txt
+                      You are an expert Linux kernel developer. The following `.rej` (reject) file contains changes that failed to apply to the target C file due to context mismatches.
+                      Your task is to apply the changes from the reject file into the target file logically.
+                      Return ONLY the fully updated target file code. Do NOT include markdown formatting like ```c or any explanations.
+                      EOF
+                      
+                      echo -e "\n\n--- REJECT FILE ($rej_file) ---\n" >> prompt.txt
+                      cat "$rej_file" >> prompt.txt
+                      echo -e "\n\n--- TARGET FILE ($target_file) ---\n" >> prompt.txt
+                      cat "$target_file" >> prompt.txt
+                      
+                      jq -n --arg prompt "$(cat prompt.txt)" '{
+                        model: "nvidia/nemotron-3-ultra-550b-a55b:free",
+                        models: ["z-ai/glm-5.2:free"],
+                        messages: [
+                          {role: "system", content: "Return ONLY the raw updated C code. No markdown, no text."},
+                          {role: "user", content: $prompt}
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 65536
+                      }' > api_payload.json
+                      
+                      resp=$(curl -s [https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions) \
+                        -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+                        -H "Content-Type: application/json" \
+                        -H "HTTP-Referer: [https://github.com/Chor-A/Gki](https://github.com/Chor-A/Gki)" \
+                        -d @api_payload.json)
+                        
+                      resolved=$(printf "%s" "$resp" | jq -r '.choices[0].message.content // empty' || true)
+                      
+                      echo "$resolved" | sed -e 's/^```.*//g' -e 's/^```//g' > "${target_file}.tmp"
+                      
+                      if [ $(wc -c < "${target_file}.tmp") -gt 100 ]; then
+                        mv "${target_file}.tmp" "$target_file"
+                        rm -f "$rej_file"
+                        echo "✅ AI successfully patched $target_file!"
+                      else
+                        echo "❌ AI failed to patch $target_file cleanly. Keeping original."
+                      fi
+                      
+                      rm -f prompt.txt api_payload.json "${target_file}.tmp"
+                    done
+                  else
+                    echo "✅ Patch applied perfectly without AI."
+                  fi
                 fi
               done
             fi
@@ -153,7 +208,7 @@ jobs:
           echo "✅ All custom patches dynamically injected."
 
           echo "=== 3. Setting up NoMount (Manual Method) ==="
-          git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
+          git clone --depth=1 -b dev [https://github.com/maxsteeel/nomount.git](https://github.com/maxsteeel/nomount.git) ../nomount_repo
           mkdir -p fs/nomount
           cp -f ../nomount_repo/kernel/src/* fs/nomount/
           grep -q 'fs/nomount/Kconfig' fs/Kconfig || echo 'source "fs/nomount/Kconfig"' >> fs/Kconfig
@@ -161,7 +216,7 @@ jobs:
           echo "CONFIG_NOMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
           echo "=== 4. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
-          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          curl -LSs "[https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh](https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh)" | bash -s dev-susfs
 
           sed -i 's/CONFIG_KSU=m/CONFIG_KSU=y/g' arch/arm64/configs/gki_defconfig || true
           echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
