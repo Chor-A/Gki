@@ -1,87 +1,180 @@
 --- a/fs/proc/cmdline.c
 +++ b/fs/proc/cmdline.c
-@@ -4,7 +4,27 @@
+@@ -3,10 +3,71 @@
+ #include <linux/init.h>
  #include <linux/proc_fs.h>
  #include <linux/seq_file.h>
 +#include <linux/slab.h>
 +#include <linux/string.h>
++
++static void replace_str(char *buf, size_t max_len, const char *search, const char *replace)
++{
++	char *p = buf;
++	size_t s_len = strlen(search);
++	size_t r_len = strlen(replace);
++
++	while ((p = strstr(p, search)) != NULL) {
++		size_t cur_len = strlen(buf);
++		size_t tail_len = strlen(p + s_len);
++
++		if (r_len > s_len && cur_len + (r_len - s_len) >= max_len)
++			break;
++
++		if (r_len != s_len)
++			memmove(p + r_len, p + s_len, tail_len + 1);
++
++		memcpy(p, replace, r_len);
++		p += r_len;
++	}
++}
  
  static int cmdline_proc_show(struct seq_file *m, void *v)
  {
-+	char *p;
-+	char *buf = kstrdup(saved_command_line, GFP_KERNEL);
++	char *buf;
++	size_t len;
++
++	if (!saved_command_line) {
++		seq_putc(m, '\n');
++		return 0;
++	}
++
++	len = strlen(saved_command_line);
++	buf = kzalloc(len + 256, GFP_KERNEL);
 +	if (buf) {
-+		if ((p = strstr(buf, "androidboot.verifiedbootstate=orange"))) memcpy(p + 30, "green ", 6);
-+		if ((p = strstr(buf, "androidboot.verifiedbootstate=yellow"))) memcpy(p + 30, "green ", 6);
-+		if ((p = strstr(buf, "androidboot.vbmeta.device_state=unlocked"))) memcpy(p + 32, "locked  ", 8);
-+		if ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);
-+		if ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);
-+		if ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);
-+		if ((p = strstr(buf, "buildvariant=eng "))) memcpy(p + 13, "user", 4);
-+		if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
-+		if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
-+		if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
++		memcpy(buf, saved_command_line, len + 1);
++		replace_str(buf, len + 256, "androidboot.verifiedbootstate=orange", "androidboot.verifiedbootstate=green");
++		replace_str(buf, len + 256, "androidboot.verifiedbootstate=yellow", "androidboot.verifiedbootstate=green");
++		replace_str(buf, len + 256, "androidboot.verifiedbootstate=red", "androidboot.verifiedbootstate=green");
++		replace_str(buf, len + 256, "androidboot.vbmeta.device_state=unlocked", "androidboot.vbmeta.device_state=locked");
++		replace_str(buf, len + 256, "androidboot.flash.locked=0", "androidboot.flash.locked=1");
++		replace_str(buf, len + 256, "androidboot.selinux=permissive", "androidboot.selinux=enforcing");
++		replace_str(buf, len + 256, "androidboot.buildvariant=userdebug", "androidboot.buildvariant=user");
++		replace_str(buf, len + 256, "androidboot.buildvariant=eng", "androidboot.buildvariant=user");
++		replace_str(buf, len + 256, "buildvariant=userdebug", "buildvariant=user");
++		replace_str(buf, len + 256, "buildvariant=eng", "buildvariant=user");
++		replace_str(buf, len + 256, "androidboot.mode=custom", "androidboot.mode=normal");
++		replace_str(buf, len + 256, "androidboot.mode=recovery", "androidboot.mode=normal");
++		replace_str(buf, len + 256, "androidboot.secureboot=0", "androidboot.secureboot=1");
++		replace_str(buf, len + 256, "androidboot.lockstate=unlocked", "androidboot.lockstate=locked");
++		replace_str(buf, len + 256, "androidboot.warranty_bit=1", "androidboot.warranty_bit=0");
++		replace_str(buf, len + 256, "androidboot.warranty_bits=1", "androidboot.warranty_bits=0");
++		replace_str(buf, len + 256, "androidboot.force_normal_boot=0", "androidboot.force_normal_boot=1");
 +		seq_puts(m, buf);
 +		kfree(buf);
 +		seq_putc(m, '\n');
 +		return 0;
 +	}
++
  	seq_puts(m, saved_command_line);
  	seq_putc(m, '\n');
+ 	return 0;
+ }
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -9,18 +9,41 @@
+@@ -9,12 +9,74 @@
  #include <linux/seq_file.h>
  #include <linux/bootconfig.h>
  #include <linux/slab.h>
 +#include <linux/string.h>
- 
- #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
- extern int susfs_spoof_bootconfig(struct seq_file *m);
- #endif
++
++static void replace_xbc_str(char *buf, size_t max_len, const char *search, const char *replace)
++{
++	char *p = buf;
++	size_t s_len = strlen(search);
++	size_t r_len = strlen(replace);
++
++	while ((p = strstr(p, search)) != NULL) {
++		size_t cur_len = strlen(buf);
++		size_t tail_len = strlen(p + s_len);
++
++		if (r_len > s_len && cur_len + (r_len - s_len) >= max_len)
++			break;
++
++		if (r_len != s_len)
++			memmove(p + r_len, p + s_len, tail_len + 1);
++
++		memcpy(p, replace, r_len);
++		p += r_len;
++	}
++}
  
  static char *saved_boot_config;
  
  static int boot_config_proc_show(struct seq_file *m, void *v)
  {
- #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
- 	if (!susfs_spoof_bootconfig(m))
- 		return 0;
- #endif
-+	{
-+		char *p;
-+		char *buf = kstrdup(saved_boot_config, GFP_KERNEL);
-+		if (buf) {
-+			if ((p = strstr(buf, "androidboot.verifiedbootstate=orange"))) memcpy(p + 30, "green ", 6);
-+			if ((p = strstr(buf, "androidboot.verifiedbootstate=yellow"))) memcpy(p + 30, "green ", 6);
-+			if ((p = strstr(buf, "androidboot.vbmeta.device_state=unlocked"))) memcpy(p + 32, "locked  ", 8);
-+			if ((p = strstr(buf, "androidboot.flash.locked=0"))) memcpy(p + 25, "1", 1);
-+			if ((p = strstr(buf, "androidboot.selinux=permissive"))) memcpy(p + 20, "enforcing ", 10);
-+			if ((p = strstr(buf, "buildvariant=userdebug"))) memcpy(p + 13, "user     ", 9);
-+			if ((p = strstr(buf, "buildvariant=eng "))) memcpy(p + 13, "user", 4);
-+			if ((p = strstr(buf, "androidboot.mode=custom"))) memcpy(p + 17, "normal", 6);
-+			if ((p = strstr(buf, "androidboot.secureboot=0"))) memcpy(p + 23, "1", 1);
-+			if ((p = strstr(buf, "androidboot.lockstate=unlocked"))) memcpy(p + 22, "locked  ", 8);
-+			if ((p = strstr(buf, "\"orange\""))) memcpy(p + 1, "green\" ", 7);
-+			if ((p = strstr(buf, "\"yellow\""))) memcpy(p + 1, "green\" ", 7);
-+			if ((p = strstr(buf, "\"unlocked\""))) memcpy(p + 1, "locked\"  ", 9);
-+			seq_puts(m, buf);
-+			kfree(buf);
-+			return 0;
-+		}
++	char *buf;
++	size_t len;
++
++	if (!saved_boot_config)
++		return 0;
++
++	len = strlen(saved_boot_config);
++	buf = kzalloc(len + 256, GFP_KERNEL);
++	if (buf) {
++		memcpy(buf, saved_boot_config, len + 1);
++		replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \"orange\"", "androidboot.verifiedbootstate = \"green\"");
++		replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \"yellow\"", "androidboot.verifiedbootstate = \"green\"");
++		replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \"red\"", "androidboot.verifiedbootstate = \"green\"");
++		replace_xbc_str(buf, len + 256, "androidboot.vbmeta.device_state = \"unlocked\"", "androidboot.vbmeta.device_state = \"locked\"");
++		replace_xbc_str(buf, len + 256, "androidboot.flash.locked = \"0\"", "androidboot.flash.locked = \"1\"");
++		replace_xbc_str(buf, len + 256, "androidboot.selinux = \"permissive\"", "androidboot.selinux = \"enforcing\"");
++		replace_xbc_str(buf, len + 256, "androidboot.buildvariant = \"userdebug\"", "androidboot.buildvariant = \"user\"");
++		replace_xbc_str(buf, len + 256, "androidboot.buildvariant = \"eng\"", "androidboot.buildvariant = \"user\"");
++		replace_xbc_str(buf, len + 256, "buildvariant = \"userdebug\"", "buildvariant = \"user\"");
++		replace_xbc_str(buf, len + 256, "buildvariant = \"eng\"", "buildvariant = \"user\"");
++		replace_xbc_str(buf, len + 256, "androidboot.mode = \"custom\"", "androidboot.mode = \"normal\"");
++		replace_xbc_str(buf, len + 256, "androidboot.mode = \"recovery\"", "androidboot.mode = \"normal\"");
++		replace_xbc_str(buf, len + 256, "androidboot.secureboot = \"0\"", "androidboot.secureboot = \"1\"");
++		replace_xbc_str(buf, len + 256, "androidboot.lockstate = \"unlocked\"", "androidboot.lockstate = \"locked\"");
++		replace_xbc_str(buf, len + 256, "androidboot.warranty_bit = \"1\"", "androidboot.warranty_bit = \"0\"");
++		replace_xbc_str(buf, len + 256, "androidboot.warranty_bits = \"1\"", "androidboot.warranty_bits = \"0\"");
++		replace_xbc_str(buf, len + 256, "androidboot.force_normal_boot = \"0\"", "androidboot.force_normal_boot = \"1\"");
++		seq_puts(m, buf);
++		kfree(buf);
++		return 0;
 +	}
++
  	if (saved_boot_config)
  		seq_puts(m, saved_boot_config);
+ 	return 0;
+ }
 --- a/fs/proc/array.c
 +++ b/fs/proc/array.c
-@@ -176,7 +176,10 @@
+@@ -80,6 +80,7 @@
+ #include <linux/string_helpers.h>
+ #include <linux/user_namespace.h>
+ #include <linux/fs_struct.h>
++#include <linux/cred.h>
+ 
+ #include <asm/processor.h>
+ #include "internal.h"
+@@ -166,10 +167,17 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
  	if (p->files)
  		max_fds = files_fdtable(p->files)->max_fds;
  	task_unlock(p);
  	rcu_read_unlock();
  
-+	if (current_uid().val >= 10000)
++	if (__kuid_val(current_uid()) >= 10000)
 +		tpid = 0;
 +
  	if (umask >= 0)
  		seq_printf(m, "Umask:\t%#04o\n", umask);
+ 	seq_puts(m, "State:\t");
++	if (__kuid_val(current_uid()) >= 10000 && (*get_task_state(p) == 't' || *get_task_state(p) == 'T'))
++		seq_puts(m, "S (sleeping)");
++	else
+ 	seq_puts(m, get_task_state(p));
+ 
+ 	seq_put_decimal_ull(m, "\nTgid:\t", tgid);
+@@ -404,6 +412,11 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
+ 		return ret;
+ 
+ 	state = *get_task_state(task);
++	if (__kuid_val(current_uid()) >= 10000 && (state == 't' || state == 'T')) {
++		state = 'S';
++		wchan = 0;
++	}
++
+ 	vsize = eip = esp = 0;
+ 	permitted = ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS | PTRACE_MODE_NOAUDIT);
+ 	mm = get_task_mm(task);
