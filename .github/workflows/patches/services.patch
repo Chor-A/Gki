@@ -1,6 +1,8 @@
 --- a/security/selinux/ss/services.c
 +++ b/security/selinux/ss/services.c
-@@ -864,6 +864,28 @@ void security_compute_av_user(struct selinux_state *state,
+@@ -836,8 +836,29 @@ void security_compute_av_user(struct selinux_state *state,
+ 		goto out;
+ 	}
  
  	context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
  				  NULL);
@@ -13,16 +15,13 @@
 +		if (scontext->type > 0 && scontext->type <= policydb->p_types.nprim &&
 +		    tcontext->type > 0 && tcontext->type <= policydb->p_types.nprim &&
 +		    tclass > 0 && tclass <= policydb->p_classes.nprim) {
-+			
 +			const char *s_type = sym_name(policydb, SYM_TYPES, scontext->type - 1);
 +			const char *t_type = sym_name(policydb, SYM_TYPES, tcontext->type - 1);
 +			const char *t_cls  = sym_name(policydb, SYM_CLASSES, tclass - 1);
-+
 +			if (s_type && t_type && t_cls) {
 +				if ((strcmp(t_cls, "capability") == 0 && strcmp(s_type, "fsck_untrusted") == 0 && strcmp(t_type, "fsck_untrusted") == 0) ||
 +				    (strcmp(t_cls, "binder") == 0 && strcmp(s_type, "adbd") == 0 && strcmp(t_type, "adbroot") == 0) ||
 +				    (strcmp(t_cls, "process") == 0 && strcmp(s_type, "shell") == 0 && strcmp(t_type, "su") == 0)) {
-+					
 +					avd->allowed = 0;
 +					avd->auditallow = 0;
 +					avd->auditdeny = 0xffffffff;
