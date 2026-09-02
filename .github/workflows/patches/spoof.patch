@@ -1,13 +1,11 @@
 --- a/fs/proc/cmdline.c
 +++ b/fs/proc/cmdline.c
-@@ -4,4 +4,6 @@
+@@ -4,7 +4,27 @@
  #include <linux/proc_fs.h>
  #include <linux/seq_file.h>
 +#include <linux/slab.h>
 +#include <linux/string.h>
  
- static int cmdline_proc_show(struct seq_file *m, void *v)
-@@ -7,5 +9,25 @@
  static int cmdline_proc_show(struct seq_file *m, void *v)
  {
 +	char *p;
@@ -30,16 +28,21 @@
 +	}
  	seq_puts(m, saved_command_line);
  	seq_putc(m, '\n');
- 	return 0;
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -9,4 +9,5 @@
+@@ -9,18 +9,41 @@
  #include <linux/seq_file.h>
  #include <linux/bootconfig.h>
  #include <linux/slab.h>
 +#include <linux/string.h>
  
-@@ -20,8 +21,27 @@
+ #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+ extern int susfs_spoof_bootconfig(struct seq_file *m);
+ #endif
+ 
+ static char *saved_boot_config;
+ 
+ static int boot_config_proc_show(struct seq_file *m, void *v)
  {
  #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
  	if (!susfs_spoof_bootconfig(m))
@@ -69,10 +72,11 @@
 +	}
  	if (saved_boot_config)
  		seq_puts(m, saved_boot_config);
- 	return 0;
 --- a/fs/proc/array.c
 +++ b/fs/proc/array.c
-@@ -175,6 +175,9 @@
+@@ -176,7 +176,10 @@
+ 	if (p->files)
+ 		max_fds = files_fdtable(p->files)->max_fds;
  	task_unlock(p);
  	rcu_read_unlock();
  
@@ -81,5 +85,3 @@
 +
  	if (umask >= 0)
  		seq_printf(m, "Umask:\t%#04o\n", umask);
- 	seq_puts(m, "State:\t");
-  
