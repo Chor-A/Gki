@@ -30,17 +30,6 @@ index b7e330d93..c2ea31895 100644
  	select ARM_AMBA
  	select ARM_ARCH_TIMER
  	select ARM_GIC
-diff --git a/arch/arm64/configs/gki_defconfig b/arch/arm64/configs/gki_defconfig
-index 0c0bde61b..ca9c9e14c 100644
---- a/arch/arm64/configs/gki_defconfig
-+++ b/arch/arm64/configs/gki_defconfig
-@@ -744,3 +744,5 @@ CONFIG_FUNCTION_ERROR_INJECTION=y
- # CONFIG_RUNTIME_TESTING_MENU is not set
- CONFIG_CPU_FREQ_GOV_VORPAL=y
- CONFIG_NOMOUNT=y
-+CONFIG_LRU_GEN=y
-+CONFIG_LRU_GEN_ENABLED=y
-\ No newline at end of file
 diff --git a/arch/arm64/include/asm/pgtable.h b/arch/arm64/include/asm/pgtable.h
 index e1b89bf09..8b772f034 100644
 --- a/arch/arm64/include/asm/pgtable.h
