@@ -128,9 +128,7 @@ jobs:
           
           git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
 
-      - name: Apply SUSFS, Custom Patches, Manual NoMount & KernelSU-Next
-        env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      - name: Apply SUSFS, Manual NoMount & Direct Code Spoofing
         run: |
           cd work/common
 
@@ -140,89 +138,201 @@ jobs:
           cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "Warning: SUSFS patch issue"
 
-          echo "=== 2. Applying Custom Patches (.patch files) ==="
-          for dir in "$GITHUB_WORKSPACE/.github/workflows/patches" "$GITHUB_WORKSPACE/patches"; do
-            if [ -d "$dir" ]; then
-              for patch_file in "$dir"/*.patch; do
-                if [ -f "$patch_file" ]; then
-                  echo "Applying $patch_file..."
-                  sed -i 's/\r$//' "$patch_file"
-                  sed -i 's/^$/ /g' "$patch_file"
-                  
-                  if git apply --verbose --ignore-whitespace --whitespace=nowarn "$patch_file"; then
-                    echo "Applied via git apply"
-                  elif patch -p1 -N --no-backup-if-mismatch < "$patch_file"; then
-                    echo "Applied via patch"
-                  else
-                    echo "Warning: $patch_file partially skipped or failed"
-                    
-                    # AI AUTO-RESOLVE LOGIC FOR SPOOF PATCH
-                    if [[ "$patch_file" == *"spoof.patch" ]] && [ -n "$OPENROUTER_API_KEY" ]; then
-                      echo "Attempting AI auto-resolution for $patch_file via OpenRouter..."
-                      sudo apt-get update -qq && sudo apt-get install -y jq || true
-                      
-                      # Restore files to clean state before AI modification
-                      git checkout fs/proc/cmdline.c fs/proc/bootconfig.c fs/proc/array.c 2>/dev/null || true
-                      
-                      for target_file in fs/proc/cmdline.c fs/proc/bootconfig.c fs/proc/array.c; do
-                        echo "=== AI Resolving $target_file ==="
-                        echo "You are an expert Linux kernel C developer. I have a patch file that failed to apply cleanly to a C source file. Please output ONLY the fully updated C source file with the intended changes from the patch applied manually to the original file. Do not include markdown formatting or explanations." > prompt.txt
-                        echo -e "\n--- ORIGINAL FILE ($target_file) ---\n" >> prompt.txt
-                        cat "$target_file" >> prompt.txt
-                        echo -e "\n--- PATCH CONTENT ($patch_file) ---\n" >> prompt.txt
-                        cat "$patch_file" >> prompt.txt
+          echo "=== 2. Directly Injecting Spoof Modifications via Python ==="
+          python3 - << 'EOF'
+          import os
 
-                        jq -n --arg prompt "$(cat prompt.txt)" '{
-                          model: "nvidia/nemotron-3-ultra-550b-a55b:free",
-                          models: ["z-ai/glm-5.2:free"],
-                          messages: [
-                            {role: "system", content: "Output ONLY the modified C file content. No markdown formatting, no code blocks, no explanations."},
-                            {role: "user", content: $prompt}
-                          ],
-                          temperature: 0.1,
-                          max_tokens: 65536
-                        }' > api_payload.json
+          # 1. Modify fs/proc/cmdline.c
+          cmdline_path = "fs/proc/cmdline.c"
+          if os.path.exists(cmdline_path):
+              with open(cmdline_path, "r") as f:
+                  content = f.read()
+              
+              helper_code = """
+          #include <linux/slab.h>
+          #include <linux/string.h>
 
-                        resp=$(curl -s https://openrouter.ai/api/v1/chat/completions \
-                          -H "Authorization: Bearer $OPENROUTER_API_KEY" \
-                          -H "Content-Type: application/json" \
-                          -H "HTTP-Referer: https://github.com/Chor-A/Gki" \
-                          -d @api_payload.json)
-                        
-                        resolved=$(echo "$resp" | jq -r '.choices[0].message.content // empty' || true)
-                        
-                        if [ -z "$resolved" ] || [ "$resolved" = "null" ]; then
-                          echo "nvidia/nemotron returned empty, trying fallback z-ai/glm-5.2:free"
-                          jq -n --arg prompt "$(cat prompt.txt)" '{model: "z-ai/glm-5.2:free", messages: [{role: "system", content: "Output ONLY the modified C file content. No markdown formatting."}], temperature: 0.1}' > fallback_payload.json
-                          resp2=$(curl -s https://openrouter.ai/api/v1/chat/completions \
-                            -H "Authorization: Bearer $OPENROUTER_API_KEY" \
-                            -H "Content-Type: application/json" \
-                            -H "HTTP-Referer: https://github.com/Chor-A/Gki" \
-                            -d @fallback_payload.json)
-                          resolved=$(echo "$resp2" | jq -r '.choices[0].message.content // empty')
-                        fi
+          static void replace_str(char *buf, size_t max_len, const char *search, const char *replace)
+          {
+          	char *p = buf;
+          	size_t s_len = strlen(search);
+          	size_t r_len = strlen(replace);
 
-                        if [ -n "$resolved" ] && [ "$resolved" != "null" ]; then
-                          echo "$resolved" | sed -e 's/^```.*//g' -e 's/^```//g' > "$target_file.tmp"
-                          if [ $(wc -c < "$target_file.tmp") -gt 50 ]; then
-                            mv "$target_file.tmp" "$target_file"
-                            echo "AI successfully applied changes to $target_file"
-                          else
-                            echo "AI output too small, keeping original $target_file"
-                            rm -f "$target_file.tmp"
-                          fi
-                        else
-                          echo "AI failed to process $target_file"
-                        fi
-                      done
-                      rm -f prompt.txt api_payload.json fallback_payload.json
-                    fi
-                  fi
-                fi
-              done
-            fi
-          done
-          echo "✅ All custom patches dynamically injected (with AI fallback if needed)."
+          	while ((p = strstr(p, search)) != NULL) {
+          		size_t cur_len = strlen(buf);
+          		size_t tail_len = strlen(p + s_len);
+
+          		if (r_len > s_len && cur_len + (r_len - s_len) >= max_len)
+          			break;
+
+          		if (r_len != s_len)
+          			memmove(p + r_len, p + s_len, tail_len + 1);
+
+          		memcpy(p, replace, r_len);
+          		p += r_len;
+          	}
+          }
+          """
+              
+              target_func = """static int cmdline_proc_show(struct seq_file *m, void *v)
+          {
+          	seq_puts(m, saved_command_line);
+          	seq_putc(m, '\\n');
+          	return 0;
+          }"""
+
+              replacement_func = """static int cmdline_proc_show(struct seq_file *m, void *v)
+          {
+          	char *buf;
+          	size_t len;
+
+          	if (!saved_command_line) {
+          		seq_putc(m, '\\n');
+          		return 0;
+          	}
+
+          	len = strlen(saved_command_line);
+          	buf = kzalloc(len + 256, GFP_KERNEL);
+          	if (buf) {
+          		memcpy(buf, saved_command_line, len + 1);
+          		replace_str(buf, len + 256, "androidboot.verifiedbootstate=orange", "androidboot.verifiedbootstate=green");
+          		replace_str(buf, len + 256, "androidboot.verifiedbootstate=yellow", "androidboot.verifiedbootstate=green");
+          		replace_str(buf, len + 256, "androidboot.verifiedbootstate=red", "androidboot.verifiedbootstate=green");
+          		replace_str(buf, len + 256, "androidboot.vbmeta.device_state=unlocked", "androidboot.vbmeta.device_state=locked");
+          		replace_str(buf, len + 256, "androidboot.flash.locked=0", "androidboot.flash.locked=1");
+          		replace_str(buf, len + 256, "androidboot.selinux=permissive", "androidboot.selinux=enforcing");
+          		replace_str(buf, len + 256, "androidboot.buildvariant=userdebug", "androidboot.buildvariant=user");
+          		replace_str(buf, len + 256, "androidboot.buildvariant=eng", "androidboot.buildvariant=user");
+          		replace_str(buf, len + 256, "buildvariant=userdebug", "buildvariant=user");
+          		replace_str(buf, len + 256, "buildvariant=eng", "buildvariant=user");
+          		replace_str(buf, len + 256, "androidboot.mode=custom", "androidboot.mode=normal");
+          		replace_str(buf, len + 256, "androidboot.mode=recovery", "androidboot.mode=normal");
+          		replace_str(buf, len + 256, "androidboot.secureboot=0", "androidboot.secureboot=1");
+          		replace_str(buf, len + 256, "androidboot.lockstate=unlocked", "androidboot.lockstate=locked");
+          		replace_str(buf, len + 256, "androidboot.warranty_bit=1", "androidboot.warranty_bit=0");
+          		replace_str(buf, len + 256, "androidboot.warranty_bits=1", "androidboot.warranty_bits=0");
+          		replace_str(buf, len + 256, "androidboot.force_normal_boot=0", "androidboot.force_normal_boot=1");
+          		seq_puts(m, buf);
+          		kfree(buf);
+          		seq_putc(m, '\\n');
+          		return 0;
+          	}
+
+          	seq_puts(m, saved_command_line);
+          	seq_putc(m, '\\n');
+          	return 0;
+          }"""
+
+              if target_func in content:
+                  content = helper_code + "\n" + content.replace(target_func, replacement_func)
+                  with open(cmdline_path, "w") as f:
+                      f.write(content)
+                  print("Successfully spoofed fs/proc/cmdline.c")
+              else:
+                  print("Error: Target func not found in cmdline.c")
+
+          # 2. Modify fs/proc/bootconfig.c
+          boot_path = "fs/proc/bootconfig.c"
+          if os.path.exists(boot_path):
+              with open(boot_path, "r") as f:
+                  boot_content = f.read()
+
+              boot_helper = """
+          #include <linux/string.h>
+
+          static void replace_xbc_str(char *buf, size_t max_len, const char *search, const char *replace)
+          {
+          	char *p = buf;
+          	size_t s_len = strlen(search);
+          	size_t r_len = strlen(replace);
+
+          	while ((p = strstr(p, search)) != NULL) {
+          		size_t cur_len = strlen(buf);
+          		size_t tail_len = strlen(p + s_len);
+
+          		if (r_len > s_len && cur_len + (r_len - s_len) >= max_len)
+          			break;
+
+          		if (r_len != s_len)
+          			memmove(p + r_len, p + s_len, tail_len + 1);
+
+          		memcpy(p, replace, r_len);
+          		p += r_len;
+          	}
+          }
+          """
+
+              boot_target = """static int boot_config_proc_show(struct seq_file *m, void *v)
+          {
+          	if (saved_boot_config)
+          		seq_puts(m, saved_boot_config);
+          	return 0;
+          }"""
+
+              boot_replacement = """static int boot_config_proc_show(struct seq_file *m, void *v)
+          {
+          	if (saved_boot_config) {
+          		char *buf;
+          		size_t len = strlen(saved_boot_config);
+
+          		buf = kzalloc(len + 256, GFP_KERNEL);
+          		if (buf) {
+          			memcpy(buf, saved_boot_config, len + 1);
+          			replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \\"orange\\"", "androidboot.verifiedbootstate = \\"green\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \\"yellow\\"", "androidboot.verifiedbootstate = \\"green\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.verifiedbootstate = \\"red\\"", "androidboot.verifiedbootstate = \\"green\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.vbmeta.device_state = \\"unlocked\\"", "androidboot.vbmeta.device_state = \\"locked\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.flash.locked = \\"0\\"", "androidboot.flash.locked = \\"1\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.selinux = \\"permissive\\"", "androidboot.selinux = \\"enforcing\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.buildvariant = \\"userdebug\\"", "androidboot.buildvariant = \\"user\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.buildvariant = \\"eng\\"", "androidboot.buildvariant = \\"user\\"");
+          			replace_xbc_str(buf, len + 256, "buildvariant = \\"userdebug\\"", "buildvariant = \\"user\\"");
+          			replace_xbc_str(buf, len + 256, "buildvariant = \\"eng\\"", "buildvariant = \\"user\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.mode = \\"custom\\"", "androidboot.mode = \\"normal\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.mode = \\"recovery\\"", "androidboot.mode = \\"normal\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.secureboot = \\"0\\"", "androidboot.secureboot = \\"1\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.lockstate = \\"unlocked\\"", "androidboot.lockstate = \\"locked\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.warranty_bit = \\"1\\"", "androidboot.warranty_bit = \\"0\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.warranty_bits = \\"1\\"", "androidboot.warranty_bits = \\"0\\"");
+          			replace_xbc_str(buf, len + 256, "androidboot.force_normal_boot = \\"0\\"", "androidboot.force_normal_boot = \\"1\\"");
+          			seq_puts(m, buf);
+          			kfree(buf);
+          			return 0;
+          		}
+          		seq_puts(m, saved_boot_config);
+          	}
+          	return 0;
+          }"""
+
+              if boot_target in boot_content:
+                  boot_content = boot_helper + "\n" + boot_content.replace(boot_target, boot_replacement)
+                  with open(boot_path, "w") as f:
+                      f.write(boot_content)
+                  print("Successfully spoofed fs/proc/bootconfig.c")
+              else:
+                  print("Error: Target func not found in bootconfig.c")
+
+          # 3. Modify fs/proc/array.c
+          array_path = "fs/proc/array.c"
+          if os.path.exists(array_path):
+              with open(array_path, "r") as f:
+                  array_content = f.read()
+              
+              array_content = array_content.replace('#include <linux/fs_struct.h>', '#include <linux/fs_struct.h>\n#include <linux/cred.h>')
+              
+              tstate_target = 'seq_puts(m, "State:\\t");\n\tseq_puts(m, get_task_state(p));'
+              tstate_repl = 'seq_puts(m, "State:\\t");\n\tif (__kuid_val(current_uid()) >= 10000 && (*get_task_state(p) == \'t\' || *get_task_state(p) == \'T\'))\n\t\tseq_puts(m, "S (sleeping)");\n\telse\n\t\tseq_puts(m, get_task_state(p));'
+              array_content = array_content.replace(tstate_target, tstate_repl)
+
+              stat_target = 'state = *get_task_state(task);'
+              stat_repl = 'state = *get_task_state(task);\n\tif (__kuid_val(current_uid()) >= 10000 && (state == \'t\' || state == \'T\')) {\n\t\tstate = \'S\';\n\t\twchan = 0;\n\t}'
+              array_content = array_content.replace(stat_target, stat_repl)
+
+              with open(array_path, "w") as f:
+                  f.write(array_content)
+              print("Successfully spoofed fs/proc/array.c")
+          EOF
+          echo "✅ Python direct injection completed successfully!"
 
           echo "=== 3. Setting up NoMount (Manual Method) ==="
           git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
