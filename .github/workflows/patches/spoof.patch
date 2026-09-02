@@ -1,6 +1,6 @@
 --- a/fs/proc/cmdline.c
 +++ b/fs/proc/cmdline.c
-@@ -3,10 +3,68 @@
+@@ -3,6 +3,27 @@
  #include <linux/init.h>
  #include <linux/proc_fs.h>
  #include <linux/seq_file.h>
@@ -29,14 +29,17 @@
 +}
  
  static int cmdline_proc_show(struct seq_file *m, void *v)
+@@ -10,6 +31,33 @@ static int cmdline_proc_show(struct seq_file *m, void *v)
  {
+ 	if (!saved_command_line) {
+ 		seq_putc(m, '\n');
+ 		return 0;
+ 	}
+-	seq_puts(m, saved_command_line);
+-	seq_putc(m, '\n');
+-	return 0;
 +	char *buf;
 +	size_t len;
-+
-+	if (!saved_command_line) {
-+		seq_putc(m, '\n');
-+		return 0;
-+	}
 +
 +	len = strlen(saved_command_line);
 +	buf = kzalloc(len + 256, GFP_KERNEL);
@@ -65,13 +68,13 @@
 +		return 0;
 +	}
 +
- 	seq_puts(m, saved_command_line);
- 	seq_putc(m, '\n');
- 	return 0;
++	seq_puts(m, saved_command_line);
++	seq_putc(m, '\n');
++	return 0;
  }
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -9,3 +9,26 @@
+@@ -9,4 +9,26 @@
  #include <linux/seq_file.h>
  #include <linux/bootconfig.h>
  #include <linux/slab.h>
@@ -97,7 +100,10 @@
 +		p += r_len;
 +	}
 +}
-@@ -14,4 +37,33 @@ static int boot_config_proc_show(struct seq_file *m, void *v)
+ 
+ static int boot_config_proc_show(struct seq_file *m, void *v)
+@@ -14,6 +36,34 @@ static int boot_config_proc_show(struct seq_file *m, void *v)
+ {
 -	if (saved_boot_config)
 -		seq_puts(m, saved_boot_config);
 +	if (saved_boot_config) {
