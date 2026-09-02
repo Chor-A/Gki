@@ -14,6 +14,7 @@
 +	size_t r_len = strlen(replace);
 +
 +	while ((p = strstr(p, search)) != NULL) {
++		size_len_t:
 +		size_t cur_len = strlen(buf);
 +		size_t tail_len = strlen(p + s_len);
 +
@@ -71,7 +72,7 @@
  }
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -9,20 +9,75 @@
+@@ -9,3 +9,27 @@
  #include <linux/seq_file.h>
  #include <linux/bootconfig.h>
  #include <linux/slab.h>
@@ -98,13 +99,7 @@
 +	}
 +}
 +
- #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
- #include <linux/susfs.h>
- extern int susfs_spoof_bootconfig(struct seq_file *m);
- #endif
- 
- static char *saved_boot_config;
- 
+@@ -19,10 +43,44 @@ static int boot_config_proc_show(struct seq_file *m, void *v)
  static int boot_config_proc_show(struct seq_file *m, void *v)
  {
 +	char *buf;
