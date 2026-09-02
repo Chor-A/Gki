@@ -1,6 +1,7 @@
+diff --git a/fs/proc/array.c b/fs/proc/array.c
 --- a/fs/proc/array.c
 +++ b/fs/proc/array.c
-@@ -176,9 +176,12 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
+@@ -178,8 +178,11 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
  	if (p->files)
  		max_fds = files_fdtable(p->files)->max_fds;
  	task_unlock(p);
@@ -12,13 +13,10 @@
  	if (umask >= 0)
  		seq_printf(m, "Umask:\t%#04o\n", umask);
  	seq_puts(m, "State:\t");
- 	seq_puts(m, get_task_state(p));
+diff --git a/fs/proc/cmdline.c b/fs/proc/cmdline.c
 --- a/fs/proc/cmdline.c
 +++ b/fs/proc/cmdline.c
-@@ -2,11 +2,31 @@
- #include <linux/fs.h>
- #include <linux/init.h>
- #include <linux/proc_fs.h>
+@@ -5,8 +5,28 @@
  #include <linux/seq_file.h>
 +#include <linux/slab.h>
 +#include <linux/string.h>
@@ -47,12 +45,10 @@
  	seq_putc(m, '\n');
  	return 0;
  }
+diff --git a/fs/proc/bootconfig.c b/fs/proc/bootconfig.c
 --- a/fs/proc/bootconfig.c
 +++ b/fs/proc/bootconfig.c
-@@ -8,21 +8,43 @@
- #include <linux/printk.h>
- #include <linux/proc_fs.h>
- #include <linux/seq_file.h>
+@@ -10,18 +10,40 @@
  #include <linux/bootconfig.h>
  #include <linux/slab.h>
 +#include <linux/string.h>
