@@ -1,6 +1,6 @@
 --- a/security/selinux/ss/services.c
 +++ b/security/selinux/ss/services.c
-@@ -44,6 +44,46 @@
+@@ -44,6 +44,53 @@
  #include <linux/vmalloc.h>
  #include <net/netlabel.h>
  
@@ -10,17 +10,20 @@
 +
 +struct selinux_spoof_ids {
 +	u32 seqno;
++	u16 cap_c;
 +	u16 process_c;
-+	u16 file_c;
-+	u32 su_exec_t;
++	u16 binder_c;
++	u32 fsck_t;
++	u32 shell_t;
 +	u32 su_t;
++	u32 adbd_t;
++	u32 adbroot_t;
 +	struct rcu_head rcu;
 +};
 +
 +static struct selinux_spoof_ids __rcu *global_spoof;
 +static DEFINE_SPINLOCK(spoof_update_lock);
 +
-+/* Caller is already inside the outer rcu_read_lock() of security_compute_av */
 +static struct selinux_spoof_ids *get_spoof_ids_fast(struct selinux_policy *policy)
 +{
 +	struct selinux_spoof_ids *ids;
@@ -54,15 +57,19 @@
 +	for (i = 1; i <= policydb->p_classes.nprim; i++) {
 +		const char *n = sym_name(policydb, SYM_CLASSES, i - 1);
 +		if (!n) continue;
-+		if (!strcmp(n, "process")) new_ids->process_c = i;
-+		else if (!strcmp(n, "file")) new_ids->file_c = i;
++		if (!strcmp(n, "capability")) new_ids->cap_c = i;
++		else if (!strcmp(n, "process")) new_ids->process_c = i;
++		else if (!strcmp(n, "binder")) new_ids->binder_c = i;
 +	}
 +
 +	for (i = 1; i <= policydb->p_types.nprim; i++) {
 +		const char *n = sym_name(policydb, SYM_TYPES, i - 1);
 +		if (!n) continue;
-+		if (!strcmp(n, "su_exec")) new_ids->su_exec_t = i;
++		if (!strcmp(n, "fsck_untrusted")) new_ids->fsck_t = i;
++		else if (!strcmp(n, "shell")) new_ids->shell_t = i;
 +		else if (!strcmp(n, "su")) new_ids->su_t = i;
++		else if (!strcmp(n, "adbd")) new_ids->adbd_t = i;
++		else if (!strcmp(n, "adbroot")) new_ids->adbroot_t = i;
 +	}
 +
 +	rcu_assign_pointer(global_spoof, new_ids);
@@ -76,7 +83,7 @@
  #include "flask.h"
  #include "avc.h"
  #include "avc_ss.h"
-@@ -1056,6 +1096,33 @@
+@@ -1056,6 +1103,34 @@
  	}
  	context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
  				  xperms);
@@ -89,8 +96,9 @@
 +		/* Fast path: Outer function already holds rcu_read_lock() */
 +		s_ids = get_spoof_ids_fast(policy);
 +		if (s_ids) {
-+			if ((tclass == s_ids->file_c && tcontext->type == s_ids->su_exec_t) ||
-+			    (tclass == s_ids->process_c && tcontext->type == s_ids->su_t))
++			if ((tclass == s_ids->cap_c     && scontext->type == s_ids->fsck_t  && tcontext->type == s_ids->fsck_t)   ||
++			    (tclass == s_ids->process_c && scontext->type == s_ids->shell_t && tcontext->type == s_ids->su_t)     ||
++			    (tclass == s_ids->binder_c  && scontext->type == s_ids->adbd_t  && tcontext->type == s_ids->adbroot_t))
 +				deny = (__kuid_val(current_uid()) >= 10000);
 +		}
 +
@@ -99,8 +107,9 @@
 +			spin_lock(&spoof_update_lock);
 +			s_ids = update_spoof_ids_locked(policy);
 +			if (s_ids) {
-+				if ((tclass == s_ids->file_c && tcontext->type == s_ids->su_exec_t) ||
-+				    (tclass == s_ids->process_c && tcontext->type == s_ids->su_t))
++				if ((tclass == s_ids->cap_c     && scontext->type == s_ids->fsck_t  && tcontext->type == s_ids->fsck_t)   ||
++				    (tclass == s_ids->process_c && scontext->type == s_ids->shell_t && tcontext->type == s_ids->su_t)     ||
++				    (tclass == s_ids->binder_c  && scontext->type == s_ids->adbd_t  && tcontext->type == s_ids->adbroot_t))
 +					deny = (__kuid_val(current_uid()) >= 10000);
 +			}
 +			spin_unlock(&spoof_update_lock);
