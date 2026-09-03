@@ -1,34 +1,119 @@
 --- a/security/selinux/ss/services.c
 +++ b/security/selinux/ss/services.c
-@@ -836,8 +836,31 @@ void security_compute_av_user(struct selinux_state *state,
- 		goto out;
- 	}
+@@ -44,6 +44,46 @@
+ #include <linux/vmalloc.h>
+ #include <net/netlabel.h>
  
- 	context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
- 				  NULL);
++/* --- INJECTED KERNEL RULES: RCU SPOOFING ENGINE START --- */
++#include <linux/uidgid.h>
++#include <linux/cred.h>
 +
-+	/*
-+	 * INJECTED KERNEL RULES - Safe API Checker Bypass
-+	 * Zero dependencies. Strictly standard C to guarantee compilation.
-+	 */
++struct selinux_spoof_ids {
++	u32 seqno;
++	u16 process_c;
++	u16 file_c;
++	u32 su_exec_t;
++	u32 su_t;
++	struct rcu_head rcu;
++};
++
++static struct selinux_spoof_ids __rcu *global_spoof;
++static DEFINE_SPINLOCK(spoof_update_lock);
++
++/* Caller is already inside the outer rcu_read_lock() of security_compute_av */
++static struct selinux_spoof_ids *get_spoof_ids_fast(struct selinux_policy *policy)
++{
++	struct selinux_spoof_ids *ids;
++
++	ids = rcu_dereference(global_spoof);
++	if (ids && ids->seqno == policy->latest_granting)
++		return ids;
++	return NULL;
++}
++
++static struct selinux_spoof_ids *update_spoof_ids_locked(struct selinux_policy *policy)
++{
++	struct selinux_spoof_ids *ids, *new_ids;
++	struct policydb *policydb = &policy->policydb;
++	u32 current_seq = policy->latest_granting;
++	u32 i;
++
++	lockdep_assert_held(&spoof_update_lock);
++
++	ids = rcu_dereference_protected(global_spoof,
++					lockdep_is_held(&spoof_update_lock));
++	if (ids && ids->seqno == current_seq)
++		return ids;
++
++	new_ids = kzalloc(sizeof(*new_ids), GFP_ATOMIC);
++	if (!new_ids)
++		return NULL;
++
++	new_ids->seqno = current_seq;
++
++	for (i = 1; i <= policydb->p_classes.nprim; i++) {
++		const char *n = sym_name(policydb, SYM_CLASSES, i - 1);
++		if (!n) continue;
++		if (!strcmp(n, "process")) new_ids->process_c = i;
++		else if (!strcmp(n, "file")) new_ids->file_c = i;
++	}
++
++	for (i = 1; i <= policydb->p_types.nprim; i++) {
++		const char *n = sym_name(policydb, SYM_TYPES, i - 1);
++		if (!n) continue;
++		if (!strcmp(n, "su_exec")) new_ids->su_exec_t = i;
++		else if (!strcmp(n, "su")) new_ids->su_t = i;
++	}
++
++	rcu_assign_pointer(global_spoof, new_ids);
++	if (ids)
++		kfree_rcu(ids, rcu);
++
++	return new_ids;
++}
++/* --- INJECTED KERNEL RULES: RCU SPOOFING ENGINE END --- */
++
+ #include "flask.h"
+ #include "avc.h"
+ #include "avc_ss.h"
+@@ -1056,6 +1096,33 @@
+ 	}
+ 	context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
+ 				  xperms);
++
++	/* --- INJECTED KERNEL RULES: AVC BYPASS START --- */
 +	if (avd->allowed && scontext && tcontext) {
-+		if (scontext->type > 0 && scontext->type <= policydb->p_types.nprim &&
-+		    tcontext->type > 0 && tcontext->type <= policydb->p_types.nprim &&
-+		    tclass > 0 && tclass <= policydb->p_classes.nprim) {
-+			const char *s_type = sym_name(policydb, SYM_TYPES, scontext->type - 1);
-+			const char *t_type = sym_name(policydb, SYM_TYPES, tcontext->type - 1);
-+			const char *t_cls  = sym_name(policydb, SYM_CLASSES, tclass - 1);
-+			if (s_type && t_type && t_cls) {
-+				if ((strcmp(t_cls, "capability") == 0 && strcmp(s_type, "fsck_untrusted") == 0 && strcmp(t_type, "fsck_untrusted") == 0) ||
-+				    (strcmp(t_cls, "binder") == 0 && strcmp(s_type, "adbd") == 0 && strcmp(t_type, "adbroot") == 0) ||
-+				    (strcmp(t_cls, "process") == 0 && strcmp(s_type, "shell") == 0 && strcmp(t_type, "su") == 0)) {
-+					avd->allowed = 0;
-+					avd->auditallow = 0;
-+					avd->auditdeny = 0xffffffff;
-+				}
++		struct selinux_spoof_ids *s_ids = NULL;
++		bool deny = false;
++
++		/* Fast path: Outer function already holds rcu_read_lock() */
++		s_ids = get_spoof_ids_fast(policy);
++		if (s_ids) {
++			if ((tclass == s_ids->file_c && tcontext->type == s_ids->su_exec_t) ||
++			    (tclass == s_ids->process_c && tcontext->type == s_ids->su_t))
++				deny = (__kuid_val(current_uid()) >= 10000);
++		}
++
++		/* Slow path: Cache miss or policy changed, update under atomic spinlock */
++		if (!s_ids) {
++			spin_lock(&spoof_update_lock);
++			s_ids = update_spoof_ids_locked(policy);
++			if (s_ids) {
++				if ((tclass == s_ids->file_c && tcontext->type == s_ids->su_exec_t) ||
++				    (tclass == s_ids->process_c && tcontext->type == s_ids->su_t))
++					deny = (__kuid_val(current_uid()) >= 10000);
 +			}
++			spin_unlock(&spoof_update_lock);
++		}
++
++		if (deny) {
++			avd->allowed = 0;
++			avd->auditdeny = 0;
++			avd->auditallow = 0;
 +		}
 +	}
-  out:
- 	rcu_read_unlock();
- 	return;
++	/* --- INJECTED KERNEL RULES: AVC BYPASS END --- */
++
+ 	map_decision(&policy->map, orig_tclass, avd,
+ 		     policydb->allow_unknown);
+ out:
