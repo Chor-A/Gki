@@ -21,7 +21,7 @@
 +static void update_spoof_ids(struct selinux_policy *policy)
 +{
 +	struct selinux_spoof_ids *new_ids;
-+	struct selinux_spoof_ids *old_ids; /* FIX: Declared at top for C-standard compliance */
++	struct selinux_spoof_ids *old_ids; /* Declared at top for C-standard compliance */
 +	struct policydb *policydb = &policy->policydb;
 +	u32 i;
 +
