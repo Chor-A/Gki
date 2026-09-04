@@ -1,10 +1,10 @@
 --- a/security/selinux/ss/services.c
 +++ b/security/selinux/ss/services.c
-@@ -44,6 +44,51 @@
+@@ -44,6 +44,48 @@
  #include <linux/vmalloc.h>
  #include <net/netlabel.h>
- 
-+/* --- INJECTED KERNEL RULES: DUCKDETECTOR (KSU-NEXT + NEOZYGISK) START --- */
+  
++/* --- KSU-NEXT & NEOZYGISK SPOOF ENGINE START --- */
 +#include <linux/uidgid.h>
 +#include <linux/cred.h>
 +
@@ -18,11 +18,10 @@
 +static struct selinux_spoof_ids __rcu *global_spoof;
 +static DEFINE_MUTEX(spoof_update_mutex);
 +
-+/* Called ONCE during Policy Load: Resolves KSU-Next & Zygisk domains */
 +static void update_spoof_ids(struct selinux_policy *policy)
 +{
 +	struct selinux_spoof_ids *new_ids;
-+	struct selinux_spoof_ids *old_ids; /* Declared at top for C90 compliance */
++	struct selinux_spoof_ids *old_ids;
 +	struct policydb *policydb = &policy->policydb;
 +	u32 i;
 +
@@ -48,35 +47,32 @@
 +	if (old_ids)
 +		kfree_rcu(old_ids, rcu);
 +}
-+/* --- INJECTED KERNEL RULES: DUCKDETECTOR (KSU-NEXT + NEOZYGISK) END --- */
++/* --- KSU-NEXT & NEOZYGISK SPOOF ENGINE END --- */
 +
  #include "flask.h"
  #include "avc.h"
  #include "avc_ss.h"
-@@ -836,6 +881,10 @@
+@@ -836,6 +878,9 @@
  	/* Load the policycaps from the new policy */
  	security_load_policycaps(state, newpolicy);
- 
-+	/* --- INJECTED: Refresh Spoof IDs safely during policy reload --- */
+  
++	/* Refresh Spoof IDs safely */
 +	update_spoof_ids(newpolicy);
 +
  	if (!selinux_initialized(state)) {
  		/*
  		 * After first policy load, the security server is
-@@ -1090,6 +1139,27 @@
- 
+@@ -1090,6 +1135,26 @@
+  
  	context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
  				  NULL);
 +
-+	/* --- INJECTED KERNEL RULES: DUCKDETECTOR BYPASS START --- */
++	/* --- DUCKDETECTOR BYPASS START --- */
 +	if (avd->allowed && scontext && tcontext) {
 +		struct selinux_spoof_ids *s_ids = rcu_dereference(global_spoof);
-+		
-+		/* Process only if cached IDs exist and caller is an Untrusted App */
 +		if (s_ids && __kuid_val(current_uid()) >= 10000) {
 +			u32 t = tcontext->type;
 +
-+			/* Pure DuckDetector Blanket Block for KSU-Next & Zygisk */
 +			if (t && (t == s_ids->su_t || t == s_ids->su_exec_t ||
 +			          t == s_ids->ksu_t || t == s_ids->ksu_file_t ||
 +			          t == s_ids->zygisk_t || t == s_ids->zygisk_file_t)) {
@@ -87,7 +83,7 @@
 +			}
 +		}
 +	}
-+	/* --- INJECTED KERNEL RULES: DUCKDETECTOR BYPASS END --- */
++	/* --- DUCKDETECTOR BYPASS END --- */
 +
   out:
  	rcu_read_unlock();
