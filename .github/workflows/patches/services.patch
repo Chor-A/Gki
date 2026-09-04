@@ -1,6 +1,6 @@
 --- a/security/selinux/ss/services.c
 +++ b/security/selinux/ss/services.c
-@@ -44,6 +44,47 @@
+@@ -44,6 +44,51 @@
  #include <linux/vmalloc.h>
  #include <net/netlabel.h>
  
@@ -53,7 +53,7 @@
  #include "flask.h"
  #include "avc.h"
  #include "avc_ss.h"
-@@ -836,6 +877,9 @@
+@@ -836,6 +881,10 @@
  	/* Load the policycaps from the new policy */
  	security_load_policycaps(state, newpolicy);
  
@@ -63,7 +63,7 @@
  	if (!selinux_initialized(state)) {
  		/*
  		 * After first policy load, the security server is
-@@ -1090,6 +1134,26 @@
+@@ -1090,6 +1139,27 @@
  
  	context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
  				  NULL);
