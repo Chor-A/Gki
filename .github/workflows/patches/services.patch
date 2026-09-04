@@ -1,23 +1,24 @@
 --- a/security/selinux/ss/services.c
 +++ b/security/selinux/ss/services.c
-@@ -44,6 +44,45 @@
+@@ -44,6 +44,47 @@
  #include <linux/vmalloc.h>
  #include <net/netlabel.h>
  
-+/* --- INJECTED KERNEL RULES: DUCKDETECTOR (KSU-NEXT) ENGINE START --- */
++/* --- INJECTED KERNEL RULES: DUCKDETECTOR (KSU-NEXT + NEOZYGISK) START --- */
 +#include <linux/uidgid.h>
 +#include <linux/cred.h>
 +
 +struct selinux_spoof_ids {
 +	u32 su_t, su_exec_t;
 +	u32 ksu_t, ksu_file_t;
++	u32 zygisk_t, zygisk_file_t;
 +	struct rcu_head rcu;
 +};
 +
 +static struct selinux_spoof_ids __rcu *global_spoof;
 +static DEFINE_MUTEX(spoof_update_mutex);
 +
-+/* Called ONCE during Policy Load: Resolves only KSU-Next specific root domains */
++/* Called ONCE during Policy Load: Resolves KSU-Next & Zygisk domains */
 +static void update_spoof_ids(struct selinux_policy *policy)
 +{
 +	struct selinux_spoof_ids *new_ids;
@@ -35,6 +36,8 @@
 +		else if (!strcmp(n, "su_exec")) new_ids->su_exec_t = i;
 +		else if (!strcmp(n, "ksu")) new_ids->ksu_t = i;
 +		else if (!strcmp(n, "ksu_file")) new_ids->ksu_file_t = i;
++		else if (!strcmp(n, "zygisk")) new_ids->zygisk_t = i;
++		else if (!strcmp(n, "zygisk_file")) new_ids->zygisk_file_t = i;
 +	}
 +
 +	mutex_lock(&spoof_update_mutex);
@@ -45,12 +48,12 @@
 +	if (old_ids)
 +		kfree_rcu(old_ids, rcu);
 +}
-+/* --- INJECTED KERNEL RULES: DUCKDETECTOR (KSU-NEXT) ENGINE END --- */
++/* --- INJECTED KERNEL RULES: DUCKDETECTOR (KSU-NEXT + NEOZYGISK) END --- */
 +
  #include "flask.h"
  #include "avc.h"
  #include "avc_ss.h"
-@@ -836,6 +875,9 @@
+@@ -836,6 +877,9 @@
  	/* Load the policycaps from the new policy */
  	security_load_policycaps(state, newpolicy);
  
@@ -60,7 +63,7 @@
  	if (!selinux_initialized(state)) {
  		/*
  		 * After first policy load, the security server is
-@@ -1090,6 +1132,26 @@
+@@ -1090,6 +1134,26 @@
  
  	context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
  				  NULL);
@@ -73,9 +76,10 @@
 +		if (s_ids && __kuid_val(current_uid()) >= 10000) {
 +			u32 t = tcontext->type;
 +
-+			/* Pure DuckDetector Blanket Block for KSU-Next */
++			/* Pure DuckDetector Blanket Block for KSU-Next & Zygisk */
 +			if (t && (t == s_ids->su_t || t == s_ids->su_exec_t ||
-+			          t == s_ids->ksu_t || t == s_ids->ksu_file_t)) {
++			          t == s_ids->ksu_t || t == s_ids->ksu_file_t ||
++			          t == s_ids->zygisk_t || t == s_ids->zygisk_file_t)) {
 +				
 +				avd->allowed = 0;
 +				avd->auditdeny = 0;
