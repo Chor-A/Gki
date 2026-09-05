@@ -1959,8 +1959,11 @@ jobs:
           if os.path.exists("fs/readdir.c"):
               with open("fs/readdir.c", "r") as f: c = f.read()
               c = c.replace('#include <linux/unistd.h>', '#include <linux/unistd.h>\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
-              c = re.sub(r'(int error;\n)', r'\1#ifdef CONFIG_ZEROMOUNT\n\tint initial_count = count;\n#endif\n', c)
-              c = re.sub(r'(\.dirent = dirent\n\t};\n)', r'\1#ifdef CONFIG_ZEROMOUNT\n\tint initial_count = count;\n#endif\n', c)
+              
+              # Safely inject initial_count right before int error; inside getdents/getdents64 callbacks
+              target_pattern = r'(struct getdents_callback buf = \{\s*\.ctx\.actor = filldir,\s*\.dirent = dirent\s*\};\s*\n\t)int error;'
+              replacement = r'#ifdef CONFIG_ZEROMOUNT\n\tint initial_count = count;\n#endif\n\tint error;'
+              c = re.sub(target_pattern, r'\1' + replacement, c)
               
               skip = """\tif (!f.file)
           		return -EBADF;
