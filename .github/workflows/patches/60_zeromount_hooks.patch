@@ -34,7 +34,7 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 +#include <linux/zeromount.h>
 +#endif
  
-@@ -265,4 +268,23 @@ char *d_path(const struct path *path, char *buf, int buflen)
+@@ -265,6 +268,25 @@ char *d_path(const struct path *path, char *buf, int buflen)
  	if (path->dentry->d_op && path->dentry->d_op->d_dname &&
  	    (!IS_ROOT(path->dentry) || path->dentry != path->mnt->mnt_root))
  		return path->dentry->d_op->d_dname(path->dentry, buf, buflen);
@@ -58,6 +58,8 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 +	}
 +#endif
   
+ 	/*
+ 	 * We have various synthetic filesystems that never get mounted.  On
 diff --git a/fs/namei.c b/fs/namei.c
 --- a/fs/namei.c
 +++ b/fs/namei.c
@@ -1483,219 +1485,219 @@ index 000000000..0b596ea48
 +	/* Skip if parent dir is VFS-redirected */
 +	{
 +		u32 parent_hash = full_name_hash(NULL, parent_path,
-						 strlen(parent_path));
-		struct zeromount_rule *parent_rule;
-		bool parent_redirected = false;
-
-		rcu_read_lock();
-		hash_for_each_possible_rcu(zeromount_rules_ht, parent_rule,
-					   node, parent_hash) {
-			if (strcmp(parent_rule->virtual_path, parent_path) == 0 &&
-			    READ_ONCE(parent_rule->is_new)) {
-				parent_redirected = true;
-				break;
-			}
-		}
-		rcu_read_unlock();
-
-		if (parent_redirected) {
-			kfree(path_copy);
-			return;
-		}
-	}
-
-	zeromount_auto_inject_parent(parent_path, DT_DIR, depth + 1);
-
-	hash = full_name_hash(NULL, parent_path, strlen(parent_path));
-
-	spin_lock(&zeromount_lock);
-
-	hash_for_each_possible(zeromount_dirs_ht, curr, node, hash) {
-		if (strcmp(curr->dir_path, parent_path) == 0) {
-			dir_node = curr;
-			break;
-		}
-	}
-
-	if (!dir_node) {
-		dir_node = kzalloc(sizeof(*dir_node), GFP_ATOMIC);
-		if (!dir_node)
-			goto unlock_out;
-
-		dir_node->dir_path = kstrdup(parent_path, GFP_ATOMIC);
-		INIT_LIST_HEAD(&dir_node->children_names);
-		hash_add_rcu(zeromount_dirs_ht, &dir_node->node, hash);
-		atomic_inc(&zeromount_dirs_count);
-	}
-
-	list_for_each_entry(child, &dir_node->children_names, list) {
-		if (strcmp(child->name, name) == 0) {
-			child_exists = true;
-			break;
-		}
-	}
-
-	if (!child_exists) {
-		child = kzalloc(sizeof(*child), GFP_ATOMIC);
-		if (child) {
-			child->name = kstrdup(name, GFP_ATOMIC);
-			child->d_type = (type == DT_DIR) ? 4 : 8;
-			list_add_tail_rcu(&child->list,
-					  &dir_node->children_names);
-		}
-	}
-
-unlock_out:
-	spin_unlock(&zeromount_lock);
-	kfree(path_copy);
-}
-
-static int zeromount_ioctl_add_rule(unsigned long arg)
-{
-	struct zeromount_ioctl_data data;
-	struct zeromount_rule *rule;
-	char *v_path_raw, *v_path, *r_path;
-	struct path path;
-	unsigned char type;
-	u32 hash;
-
-	if (copy_from_user(&data, (void __user *)arg, sizeof(data)))
-		return -EFAULT;
-
-	v_path_raw = strndup_user(data.virtual_path, PATH_MAX);
-	if (IS_ERR(v_path_raw))
-		return PTR_ERR(v_path_raw);
-
-	v_path = zeromount_normalize_path(v_path_raw);
-	kfree(v_path_raw);
-	if (!v_path)
-		return -ENOMEM;
-
-	r_path = strndup_user(data.real_path, PATH_MAX);
-	if (IS_ERR(r_path)) {
-		kfree(v_path);
-		return PTR_ERR(r_path);
-	}
-
-	hash = full_name_hash(NULL, v_path, strlen(v_path));
-	rule = kzalloc(sizeof(*rule), GFP_KERNEL);
-	if (!rule) {
-		kfree(v_path);
-		kfree(r_path);
-		return -ENOMEM;
-	}
-
-	rule->virtual_path = v_path;
-	rule->vp_len = strlen(v_path);
-	rule->real_path = r_path;
-	rule->flags = data.flags | ZM_FLAG_ACTIVE;
-	rule->is_new = false;
-
-	if (zm_ino_adb == 0)
-		zeromount_refresh_critical_inodes();
-
-	if (kern_path(r_path, LOOKUP_FOLLOW, &path) == 0) {
-		struct inode *inode = d_backing_inode(path.dentry);
-
-		if (inode) {
-			rule->real_ino = inode->i_ino;
-			rule->real_dev = inode->i_sb->s_dev;
-		}
-		path_put(&path);
-	} else {
-		rule->real_ino = 0;
-		rule->real_dev = 0;
-	}
-
-	/* Capture virtual path's dev/ino for maps spoofing.
-	 * Replacement rules use real inode; injected files use
-	 * parent device + generated ino. */
-	zm_enter();
-	if (kern_path(v_path, LOOKUP_FOLLOW, &path) == 0) {
-		struct inode *vinode = d_backing_inode(path.dentry);
-
-		if (vinode) {
-			rule->v_ino = vinode->i_ino;
-			rule->v_dev = vinode->i_sb->s_dev;
-		}
-		path_put(&path);
-	}
-	zm_exit();
-
-	if (rule->v_ino == 0) {
-		rule->v_ino = zeromount_generate_ino(v_path, r_path);
-		{
-			char *parent_copy = kstrdup(v_path, GFP_KERNEL);
-
-			if (parent_copy) {
-				char *slash = strrchr(parent_copy, '/');
-
-				if (slash && slash != parent_copy) {
-					*slash = '\0';
-					zm_enter();
-					if (kern_path(parent_copy, LOOKUP_FOLLOW,
-						      &path) == 0) {
-						struct inode *pinode =
-							d_backing_inode(path.dentry);
-						if (pinode)
-							rule->v_dev = pinode->i_sb->s_dev;
-						path_put(&path);
-					}
-					zm_exit();
-				}
-				kfree(parent_copy);
-			}
-		}
-	}
-
-	spin_lock(&zeromount_lock);
-	hash_add_rcu(zeromount_rules_ht, &rule->node, hash);
-	zm_bloom_add(hash);
-	ZM_DBG("bloom: add hash=0x%08x path=%s\n", hash, rule->virtual_path);
-	if (rule->real_ino != 0) {
-		unsigned long ino_key = rule->real_ino ^ rule->real_dev;
-
-		hash_add_rcu(zeromount_ino_ht, &rule->ino_node, ino_key);
-	}
-	list_add_tail(&rule->list, &zeromount_rules_list);
-	atomic_inc(&zeromount_rule_count);
-	spin_unlock(&zeromount_lock);
-
-	type = DT_REG;
-	if (data.flags & ZM_FLAG_IS_DIR)
-		type = DT_DIR;
-
-	if (kern_path(rule->virtual_path, LOOKUP_FOLLOW, &path) == 0) {
-		path_put(&path);
-	} else {
-		zeromount_auto_inject_parent(rule->virtual_path, type, 0);
-		WRITE_ONCE(rule->is_new, true);
-	}
-	zeromount_flush_dcache(rule->virtual_path);
-	return 0;
-}
-
-static void zeromount_cleanup_parent_dir(char *v_path)
-{
-	char *end = v_path + strlen(v_path);
-	char *last_slash, *p;
-	struct zeromount_dir_node *dir_node;
-	struct zeromount_child_name *child, *tmp_child;
-	u32 hash;
-	bool pruned;
-
-	do {
-		pruned = false;
-		last_slash = strrchr(v_path, '/');
-		if (!last_slash || last_slash == v_path)
-			break;
-
-		*last_slash = '\0';
-		hash = full_name_hash(NULL, v_path, strlen(v_path));
-
-		hash_for_each_possible(zeromount_dirs_ht, dir_node,
-				       node, hash) {
-			if (strcmp(dir_node->dir_path, v_path) != 0)
++						 strlen(parent_path));
++		struct zeromount_rule *parent_rule;
++		bool parent_redirected = false;
++
++		rcu_read_lock();
++		hash_for_each_possible_rcu(zeromount_rules_ht, parent_rule,
++					   node, parent_hash) {
++			if (strcmp(parent_rule->virtual_path, parent_path) == 0 &&
++			    READ_ONCE(parent_rule->is_new)) {
++				parent_redirected = true;
++				break;
++			}
++		}
++		rcu_read_unlock();
++
++		if (parent_redirected) {
++			kfree(path_copy);
++			return;
++		}
++	}
++
++	zeromount_auto_inject_parent(parent_path, DT_DIR, depth + 1);
++
++	hash = full_name_hash(NULL, parent_path, strlen(parent_path));
++
++	spin_lock(&zeromount_lock);
++
++	hash_for_each_possible(zeromount_dirs_ht, curr, node, hash) {
++		if (strcmp(curr->dir_path, parent_path) == 0) {
++			dir_node = curr;
++			break;
++		}
++	}
++
++	if (!dir_node) {
++		dir_node = kzalloc(sizeof(*dir_node), GFP_ATOMIC);
++		if (!dir_node)
++			goto unlock_out;
++
++		dir_node->dir_path = kstrdup(parent_path, GFP_ATOMIC);
++		INIT_LIST_HEAD(&dir_node->children_names);
++		hash_add_rcu(zeromount_dirs_ht, &dir_node->node, hash);
++		atomic_inc(&zeromount_dirs_count);
++	}
++
++	list_for_each_entry(child, &dir_node->children_names, list) {
++		if (strcmp(child->name, name) == 0) {
++			child_exists = true;
++			break;
++		}
++	}
++
++	if (!child_exists) {
++		child = kzalloc(sizeof(*child), GFP_ATOMIC);
++		if (child) {
++			child->name = kstrdup(name, GFP_ATOMIC);
++			child->d_type = (type == DT_DIR) ? 4 : 8;
++			list_add_tail_rcu(&child->list,
++					  &dir_node->children_names);
++		}
++	}
++
++unlock_out:
++	spin_unlock(&zeromount_lock);
++	kfree(path_copy);
++}
++
++static int zeromount_ioctl_add_rule(unsigned long arg)
++{
++	struct zeromount_ioctl_data data;
++	struct zeromount_rule *rule;
++	char *v_path_raw, *v_path, *r_path;
++	struct path path;
++	unsigned char type;
++	u32 hash;
++
++	if (copy_from_user(&data, (void __user *)arg, sizeof(data)))
++		return -EFAULT;
++
++	v_path_raw = strndup_user(data.virtual_path, PATH_MAX);
++	if (IS_ERR(v_path_raw))
++		return PTR_ERR(v_path_raw);
++
++	v_path = zeromount_normalize_path(v_path_raw);
++	kfree(v_path_raw);
++	if (!v_path)
++		return -ENOMEM;
++
++	r_path = strndup_user(data.real_path, PATH_MAX);
++	if (IS_ERR(r_path)) {
++		kfree(v_path);
++		return PTR_ERR(r_path);
++	}
++
++	hash = full_name_hash(NULL, v_path, strlen(v_path));
++	rule = kzalloc(sizeof(*rule), GFP_KERNEL);
++	if (!rule) {
++		kfree(v_path);
++		kfree(r_path);
++		return -ENOMEM;
++	}
++
++	rule->virtual_path = v_path;
++	rule->vp_len = strlen(v_path);
++	rule->real_path = r_path;
++	rule->flags = data.flags | ZM_FLAG_ACTIVE;
++	rule->is_new = false;
++
++	if (zm_ino_adb == 0)
++		zeromount_refresh_critical_inodes();
++
++	if (kern_path(r_path, LOOKUP_FOLLOW, &path) == 0) {
++		struct inode *inode = d_backing_inode(path.dentry);
++
++		if (inode) {
++			rule->real_ino = inode->i_ino;
++			rule->real_dev = inode->i_sb->s_dev;
++		}
++		path_put(&path);
++	} else {
++		rule->real_ino = 0;
++		rule->real_dev = 0;
++	}
++
++	/* Capture virtual path's dev/ino for maps spoofing.
++	 * Replacement rules use real inode; injected files use
++	 * parent device + generated ino. */
++	zm_enter();
++	if (kern_path(v_path, LOOKUP_FOLLOW, &path) == 0) {
++		struct inode *vinode = d_backing_inode(path.dentry);
++
++		if (vinode) {
++			rule->v_ino = vinode->i_ino;
++			rule->v_dev = vinode->i_sb->s_dev;
++		}
++		path_put(&path);
++	}
++	zm_exit();
++
++	if (rule->v_ino == 0) {
++		rule->v_ino = zeromount_generate_ino(v_path, r_path);
++		{
++			char *parent_copy = kstrdup(v_path, GFP_KERNEL);
++
++			if (parent_copy) {
++				char *slash = strrchr(parent_copy, '/');
++
++				if (slash && slash != parent_copy) {
++					*slash = '\0';
++					zm_enter();
++					if (kern_path(parent_copy, LOOKUP_FOLLOW,
++						      &path) == 0) {
++						struct inode *pinode =
++							d_backing_inode(path.dentry);
++						if (pinode)
++							rule->v_dev = pinode->i_sb->s_dev;
++						path_put(&path);
++					}
++					zm_exit();
++				}
++				kfree(parent_copy);
++			}
++		}
++	}
++
++	spin_lock(&zeromount_lock);
++	hash_add_rcu(zeromount_rules_ht, &rule->node, hash);
++	zm_bloom_add(hash);
++	ZM_DBG("bloom: add hash=0x%08x path=%s\n", hash, rule->virtual_path);
++	if (rule->real_ino != 0) {
++		unsigned long ino_key = rule->real_ino ^ rule->real_dev;
++
++		hash_add_rcu(zeromount_ino_ht, &rule->ino_node, ino_key);
++	}
++	list_add_tail(&rule->list, &zeromount_rules_list);
++	atomic_inc(&zeromount_rule_count);
++	spin_unlock(&zeromount_lock);
++
++	type = DT_REG;
++	if (data.flags & ZM_FLAG_IS_DIR)
++		type = DT_DIR;
++
++	if (kern_path(rule->virtual_path, LOOKUP_FOLLOW, &path) == 0) {
++		path_put(&path);
++	} else {
++		zeromount_auto_inject_parent(rule->virtual_path, type, 0);
++		WRITE_ONCE(rule->is_new, true);
++	}
++	zeromount_flush_dcache(rule->virtual_path);
++	return 0;
++}
++
++static void zeromount_cleanup_parent_dir(char *v_path)
++{
++	char *end = v_path + strlen(v_path);
++	char *last_slash, *p;
++	struct zeromount_dir_node *dir_node;
++	struct zeromount_child_name *child, *tmp_child;
++	u32 hash;
++	bool pruned;
++
++	do {
++		pruned = false;
++		last_slash = strrchr(v_path, '/');
++		if (!last_slash || last_slash == v_path)
++			break;
++
++		*last_slash = '\0';
++		hash = full_name_hash(NULL, v_path, strlen(v_path));
++
++		hash_for_each_possible(zeromount_dirs_ht, dir_node,
++				       node, hash) {
++			if (strcmp(dir_node->dir_path, v_path) != 0)
 				continue;
 
 			list_for_each_entry_safe(child, tmp_child,
