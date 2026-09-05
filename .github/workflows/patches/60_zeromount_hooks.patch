@@ -27,15 +27,14 @@ diff --git a/fs/Makefile b/fs/Makefile
 diff --git a/fs/d_path.c b/fs/d_path.c
 --- a/fs/d_path.c
 +++ b/fs/d_path.c
-@@ -8,3 +8,6 @@
+@@ -7,3 +7,6 @@
  #include <linux/prefetch.h>
  #include "mount.h"
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
  
- static int prepend(char **buffer, int *buflen, const char *str, int namelen)
-@@ -265,5 +268,24 @@ char *d_path(const struct path *path, char *buf, int buflen)
+@@ -265,4 +268,23 @@ char *d_path(const struct path *path, char *buf, int buflen)
  	if (path->dentry->d_op && path->dentry->d_op->d_dname &&
  	    (!IS_ROOT(path->dentry) || path->dentry != path->mnt->mnt_root))
  		return path->dentry->d_op->d_dname(path->dentry, buf, buflen);
@@ -59,7 +58,6 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 +	}
 +#endif
   
- 	/*
 diff --git a/fs/namei.c b/fs/namei.c
 --- a/fs/namei.c
 +++ b/fs/namei.c
@@ -126,14 +124,13 @@ diff --git a/fs/namei.c b/fs/namei.c
 diff --git a/fs/proc/base.c b/fs/proc/base.c
 --- a/fs/proc/base.c
 +++ b/fs/proc/base.c
-@@ -60,4 +60,7 @@
+@@ -60,3 +60,6 @@
  #include <linux/sched/mm.h>
  #include <linux/sched/coredump.h>
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
  #include <linux/sched/stat.h>
- #include <linux/posix-timers.h>
 @@ -1835,5 +1838,25 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
  	if (!tmp)
  		return -ENOMEM;
@@ -163,14 +160,13 @@ diff --git a/fs/proc/base.c b/fs/proc/base.c
 diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
 --- a/fs/proc/task_mmu.c
 +++ b/fs/proc/task_mmu.c
-@@ -18,4 +18,7 @@
+@@ -18,3 +18,6 @@
  #include <linux/uaccess.h>
  #include <linux/pkeys.h>
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
  
- #include <asm/elf.h>
 @@ -369,6 +372,9 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
  		dev = inode->i_sb->s_dev;
  		ino = inode->i_ino;
@@ -408,18 +404,14 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 diff --git a/fs/stat.c b/fs/stat.c
 --- a/fs/stat.c
 +++ b/fs/stat.c
-@@ -18,6 +18,10 @@
- #include <linux/syscalls.h>
+@@ -18,3 +18,6 @@
  #include <linux/pagemap.h>
  #include <linux/compat.h>
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
-+
  
- #ifdef CONFIG_KSU_SUSFS
- #include <linux/susfs.h>
-@@ -226,6 +230,38 @@ int vfs_fstat(int fd, struct kstat *stat)
+@@ -226,6 +229,38 @@ int vfs_fstat(int fd, struct kstat *stat)
   *
   * 0 will be returned on success, and a -ve error code if unsuccessful.
   */
@@ -458,7 +450,7 @@ diff --git a/fs/stat.c b/fs/stat.c
  
  #ifdef CONFIG_KSU_SUSFS
  extern struct static_key_true ksu_su_compat_enabled;
-@@ -262,6 +298,17 @@ static int vfs_statx(int dfd, const char __user *filename, int flags,
+@@ -262,6 +297,17 @@ static int vfs_statx(int dfd, const char __user *filename, int flags,
  	}
  
  orig_flow:
@@ -479,18 +471,14 @@ diff --git a/fs/stat.c b/fs/stat.c
 diff --git a/fs/statfs.c b/fs/statfs.c
 --- a/fs/statfs.c
 +++ b/fs/statfs.c
-@@ -11,6 +11,10 @@
- #include <linux/statfs.h>
+@@ -12,3 +12,6 @@
  #include <linux/export.h>
  #include <linux/user_namespace.h>
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
-+
  
- #include "internal.h"
- 
-@@ -148,6 +152,13 @@ int user_statfs(const char __user *pathname, struct kstatfs *st)
+@@ -148,6 +151,13 @@ int user_statfs(const char __user *pathname, struct kstatfs *st)
  retry:
  	error = user_path_at(AT_FDCWD, pathname, lookup_flags, &path);
  	if (!error) {
@@ -507,19 +495,14 @@ diff --git a/fs/statfs.c b/fs/statfs.c
 diff --git a/fs/xattr.c b/fs/xattr.c
 --- a/fs/xattr.c
 +++ b/fs/xattr.c
-@@ -15,6 +15,10 @@
- #include <linux/export.h>
+@@ -16,3 +16,6 @@
  #include <linux/fsnotify.h>
  #include <linux/audit.h>
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
-+
  
- #include <linux/security.h>
- #include <linux/ima.h>
- #include <linux/evm.h>
-@@ -404,6 +408,12 @@ EXPORT_SYMBOL(__vfs_getxattr);
+@@ -404,6 +407,12 @@ EXPORT_SYMBOL(__vfs_getxattr);
  ssize_t
  vfs_getxattr(struct dentry *dentry, const char *name, void *value, size_t size)
  {
@@ -1268,238 +1251,238 @@ index 000000000..0b596ea48
 +
 +			list_for_each_entry_rcu(zm_child,
 +						&zm_dir->children_names,
-						list) {
-				char name_local[256];
-				unsigned char type_local;
-				int name_len, reclen;
-				unsigned long fake_ino;
-
-				if (cur_idx++ < v_index)
-					continue;
-
-				strscpy(name_local, zm_child->name,
-					sizeof(name_local));
-				type_local = zm_child->d_type;
-				name_len = strlen(name_local);
-
-				if (compat) {
-					struct linux_dirent __user *de;
-
-					reclen = ALIGN(offsetof(struct linux_dirent, d_name) + name_len + 2, 4);
-					if (*count < reclen)
-						break;
-					de = (struct linux_dirent __user *)*dirent;
-					fake_ino = zeromount_generate_ino(dir_path, name_local);
-					if (put_user(fake_ino, &de->d_ino) ||
-					    put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &de->d_off) ||
-					    put_user(reclen, &de->d_reclen) ||
-					    copy_to_user(de->d_name, name_local, name_len) ||
-					    put_user(0, de->d_name + name_len) ||
-					    put_user(type_local, ((char __user *)de) + reclen - 1))
-						break;
-				} else {
-					struct linux_dirent64 __user *de64;
-
-					reclen = ALIGN(offsetof(struct linux_dirent64, d_name) + name_len + 1, sizeof(u64));
-					if (*count < reclen)
-						break;
-					de64 = (struct linux_dirent64 __user *)*dirent;
-					fake_ino = zeromount_generate_ino(dir_path, name_local);
-					if (put_user(fake_ino, &de64->d_ino) ||
-					    put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &de64->d_off) ||
-					    put_user(reclen, &de64->d_reclen) ||
-					    put_user(type_local, &de64->d_type) ||
-					    copy_to_user(de64->d_name, name_local, name_len) ||
-					    put_user(0, de64->d_name + name_len))
-						break;
-				}
-
-				*dirent = (void __user *)((char __user *)*dirent + reclen);
-				*count -= reclen;
-				v_index++;
-				*pos = ZEROMOUNT_MAGIC_POS + v_index;
-			}
-			break;
-		}
-		rcu_read_unlock();
-	}
-
-	__putname(page_buf);
-}
-
-void zeromount_inject_dents64(struct file *file, void __user **dirent,
-			      int *count, loff_t *pos)
-{
-	zeromount_inject_dents_common(file, dirent, count, pos, 0);
-}
-
-void zeromount_inject_dents(struct file *file, void __user **dirent,
-			    int *count, loff_t *pos)
-{
-	zeromount_inject_dents_common(file, dirent, count, pos, 1);
-}
-
-#define EROFS_SUPER_MAGIC 0xE0F5E1E2
-#define EXT4_SUPER_MAGIC  0xEF53
-#define F2FS_SUPER_MAGIC  0xF2F52010
-
-int zeromount_spoof_statfs(const char __user *pathname, struct kstatfs *buf)
-{
-	char *kpath;
-	char *resolved;
-	int ret = 0;
-
-	if (zeromount_should_skip() ||
-	    zeromount_is_uid_blocked(current_uid().val))
-		return 0;
-#ifdef CONFIG_KSU_SUSFS
-	if (susfs_is_current_proc_umounted())
-		return 0;
-#endif
-
-	kpath = strndup_user(pathname, PATH_MAX);
-	if (IS_ERR(kpath))
-		return 0;
-
-	resolved = zeromount_resolve_path(kpath);
-	if (!resolved) {
-		kfree(kpath);
-		return 0;
-	}
-
-	if (strncmp(kpath, "/system", 7) == 0 ||
-	    strncmp(kpath, "/vendor", 7) == 0 ||
-	    strncmp(kpath, "/product", 8) == 0 ||
-	    strncmp(kpath, "/odm", 4) == 0) {
-		buf->f_type = EROFS_SUPER_MAGIC;
-		ret = 1;
-	}
-
-	kfree(kpath);
-	kfree(resolved);
-	return ret;
-}
-EXPORT_SYMBOL(zeromount_spoof_statfs);
-
-static const char *zeromount_get_selinux_context(const char *vpath)
-{
-	if (!vpath)
-		return NULL;
-
-	if (strncmp(vpath, "/lib64", 6) == 0 ||
-	    strncmp(vpath, "/lib", 4) == 0)
-		return "u:object_r:system_lib_file:s0";
-
-	if (strncmp(vpath, "/bin", 4) == 0)
-		return "u:object_r:system_file:s0";
-
-	if (strncmp(vpath, "/fonts", 6) == 0)
-		return "u:object_r:system_file:s0";
-
-	if (strncmp(vpath, "/framework", 10) == 0)
-		return "u:object_r:system_file:s0";
-
-	if (strncmp(vpath, "/etc", 4) == 0)
-		return "u:object_r:system_file:s0";
-
-	if (strncmp(vpath, "/vendor", 7) == 0)
-		return "u:object_r:vendor_file:s0";
-
-	if (strncmp(vpath, "/product", 8) == 0)
-		return "u:object_r:system_file:s0";
-
-	if (vpath[0] == '/')
-		return "u:object_r:system_file:s0";
-
-	return NULL;
-}
-
-ssize_t zeromount_spoof_xattr(struct dentry *dentry, const char *name,
-			      void *value, size_t size)
-{
-	struct inode *inode;
-	char *vpath;
-	const char *context;
-	size_t ctx_len;
-
-	if (zeromount_should_skip() ||
-	    zeromount_is_uid_blocked(current_uid().val))
-		return -EOPNOTSUPP;
-#ifdef CONFIG_KSU_SUSFS
-	if (susfs_is_current_proc_umounted())
-		return -EOPNOTSUPP;
-#endif
-
-	if (!dentry || !name)
-		return -EOPNOTSUPP;
-
-	if (strcmp(name, "security.selinux") != 0)
-		return -EOPNOTSUPP;
-
-	inode = d_backing_inode(dentry);
-	if (!inode)
-		return -EOPNOTSUPP;
-
-	vpath = zeromount_get_virtual_path_for_inode(inode);
-	if (!vpath)
-		return -EOPNOTSUPP;
-
-	context = zeromount_get_selinux_context(vpath);
-	kfree(vpath);
-
-	if (!context)
-		return -EOPNOTSUPP;
-
-	ctx_len = strlen(context) + 1;
-
-	if (size == 0)
-		return ctx_len;
-	if (size < ctx_len)
-		return -ERANGE;
-
-	memcpy(value, context, ctx_len);
-	return ctx_len;
-}
-EXPORT_SYMBOL(zeromount_spoof_xattr);
-
-static void zeromount_auto_inject_parent(const char *v_path,
-					 unsigned char type, int depth)
-{
-	char *parent_path, *name, *path_copy, *last_slash;
-	struct zeromount_dir_node *dir_node = NULL, *curr;
-	struct zeromount_child_name *child;
-	u32 hash;
-	bool child_exists = false;
-
-	if (depth > 20)
-		return;
-
-	/* Existing path on real fs means all ancestors exist too */
-	{
-		struct path check;
-		if (kern_path(v_path, LOOKUP_FOLLOW, &check) == 0) {
-			path_put(&check);
-			return;
-		}
-	}
-
-	path_copy = kstrdup(v_path, GFP_KERNEL);
-	if (!path_copy)
-		return;
-
-	last_slash = strrchr(path_copy, '/');
-	if (!last_slash || last_slash == path_copy) {
-		kfree(path_copy);
-		return;
-	}
-
-	*last_slash = '\0';
-	parent_path = path_copy;
-	name = last_slash + 1;
-
-	/* Skip if parent dir is VFS-redirected */
-	{
-		u32 parent_hash = full_name_hash(NULL, parent_path,
++						list) {
++				char name_local[256];
++				unsigned char type_local;
++				int name_len, reclen;
++				unsigned long fake_ino;
++
++				if (cur_idx++ < v_index)
++					continue;
++
++				strscpy(name_local, zm_child->name,
++					sizeof(name_local));
++				type_local = zm_child->d_type;
++				name_len = strlen(name_local);
++
++				if (compat) {
++					struct linux_dirent __user *de;
++
++					reclen = ALIGN(offsetof(struct linux_dirent, d_name) + name_len + 2, 4);
++					if (*count < reclen)
++						break;
++					de = (struct linux_dirent __user *)*dirent;
++					fake_ino = zeromount_generate_ino(dir_path, name_local);
++					if (put_user(fake_ino, &de->d_ino) ||
++					    put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &de->d_off) ||
++					    put_user(reclen, &de->d_reclen) ||
++					    copy_to_user(de->d_name, name_local, name_len) ||
++					    put_user(0, de->d_name + name_len) ||
++					    put_user(type_local, ((char __user *)de) + reclen - 1))
++						break;
++				} else {
++					struct linux_dirent64 __user *de64;
++
++					reclen = ALIGN(offsetof(struct linux_dirent64, d_name) + name_len + 1, sizeof(u64));
++					if (*count < reclen)
++						break;
++					de64 = (struct linux_dirent64 __user *)*dirent;
++					fake_ino = zeromount_generate_ino(dir_path, name_local);
++					if (put_user(fake_ino, &de64->d_ino) ||
++					    put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &de64->d_off) ||
++					    put_user(reclen, &de64->d_reclen) ||
++					    put_user(type_local, &de64->d_type) ||
++					    copy_to_user(de64->d_name, name_local, name_len) ||
++					    put_user(0, de64->d_name + name_len))
++						break;
++				}
++
++				*dirent = (void __user *)((char __user *)*dirent + reclen);
++				*count -= reclen;
++				v_index++;
++				*pos = ZEROMOUNT_MAGIC_POS + v_index;
++			}
++			break;
++		}
++		rcu_read_unlock();
++	}
++
++	__putname(page_buf);
++}
++
++void zeromount_inject_dents64(struct file *file, void __user **dirent,
++			      int *count, loff_t *pos)
++{
++	zeromount_inject_dents_common(file, dirent, count, pos, 0);
++}
++
++void zeromount_inject_dents(struct file *file, void __user **dirent,
++			    int *count, loff_t *pos)
++{
++	zeromount_inject_dents_common(file, dirent, count, pos, 1);
++}
++
++#define EROFS_SUPER_MAGIC 0xE0F5E1E2
++#define EXT4_SUPER_MAGIC  0xEF53
++#define F2FS_SUPER_MAGIC  0xF2F52010
++
++int zeromount_spoof_statfs(const char __user *pathname, struct kstatfs *buf)
++{
++	char *kpath;
++	char *resolved;
++	int ret = 0;
++
++	if (zeromount_should_skip() ||
++	    zeromount_is_uid_blocked(current_uid().val))
++		return 0;
++#ifdef CONFIG_KSU_SUSFS
++	if (susfs_is_current_proc_umounted())
++		return 0;
++#endif
++
++	kpath = strndup_user(pathname, PATH_MAX);
++	if (IS_ERR(kpath))
++		return 0;
++
++	resolved = zeromount_resolve_path(kpath);
++	if (!resolved) {
++		kfree(kpath);
++		return 0;
++	}
++
++	if (strncmp(kpath, "/system", 7) == 0 ||
++	    strncmp(kpath, "/vendor", 7) == 0 ||
++	    strncmp(kpath, "/product", 8) == 0 ||
++	    strncmp(kpath, "/odm", 4) == 0) {
++		buf->f_type = EROFS_SUPER_MAGIC;
++		ret = 1;
++	}
++
++	kfree(kpath);
++	kfree(resolved);
++	return ret;
++}
++EXPORT_SYMBOL(zeromount_spoof_statfs);
++
++static const char *zeromount_get_selinux_context(const char *vpath)
++{
++	if (!vpath)
++		return NULL;
++
++	if (strncmp(vpath, "/lib64", 6) == 0 ||
++	    strncmp(vpath, "/lib", 4) == 0)
++		return "u:object_r:system_lib_file:s0";
++
++	if (strncmp(vpath, "/bin", 4) == 0)
++		return "u:object_r:system_file:s0";
++
++	if (strncmp(vpath, "/fonts", 6) == 0)
++		return "u:object_r:system_file:s0";
++
++	if (strncmp(vpath, "/framework", 10) == 0)
++		return "u:object_r:system_file:s0";
++
++	if (strncmp(vpath, "/etc", 4) == 0)
++		return "u:object_r:system_file:s0";
++
++	if (strncmp(vpath, "/vendor", 7) == 0)
++		return "u:object_r:vendor_file:s0";
++
++	if (strncmp(vpath, "/product", 8) == 0)
++		return "u:object_r:system_file:s0";
++
++	if (vpath[0] == '/')
++		return "u:object_r:system_file:s0";
++
++	return NULL;
++}
++
++ssize_t zeromount_spoof_xattr(struct dentry *dentry, const char *name,
++			      void *value, size_t size)
++{
++	struct inode *inode;
++	char *vpath;
++	const char *context;
++	size_t ctx_len;
++
++	if (zeromount_should_skip() ||
++	    zeromount_is_uid_blocked(current_uid().val))
++		return -EOPNOTSUPP;
++#ifdef CONFIG_KSU_SUSFS
++	if (susfs_is_current_proc_umounted())
++		return -EOPNOTSUPP;
++#endif
++
++	if (!dentry || !name)
++		return -EOPNOTSUPP;
++
++	if (strcmp(name, "security.selinux") != 0)
++		return -EOPNOTSUPP;
++
++	inode = d_backing_inode(dentry);
++	if (!inode)
++		return -EOPNOTSUPP;
++
++	vpath = zeromount_get_virtual_path_for_inode(inode);
++	if (!vpath)
++		return -EOPNOTSUPP;
++
++	context = zeromount_get_selinux_context(vpath);
++	kfree(vpath);
++
++	if (!context)
++		return -EOPNOTSUPP;
++
++	ctx_len = strlen(context) + 1;
++
++	if (size == 0)
++		return ctx_len;
++	if (size < ctx_len)
++		return -ERANGE;
++
++	memcpy(value, context, ctx_len);
++	return ctx_len;
++}
++EXPORT_SYMBOL(zeromount_spoof_xattr);
++
++static void zeromount_auto_inject_parent(const char *v_path,
++					 unsigned char type, int depth)
++{
++	char *parent_path, *name, *path_copy, *last_slash;
++	struct zeromount_dir_node *dir_node = NULL, *curr;
++	struct zeromount_child_name *child;
++	u32 hash;
++	bool child_exists = false;
++
++	if (depth > 20)
++		return;
++
++	/* Existing path on real fs means all ancestors exist too */
++	{
++		struct path check;
++		if (kern_path(v_path, LOOKUP_FOLLOW, &check) == 0) {
++			path_put(&check);
++			return;
++		}
++	}
++
++	path_copy = kstrdup(v_path, GFP_KERNEL);
++	if (!path_copy)
++		return;
++
++	last_slash = strrchr(path_copy, '/');
++	if (!last_slash || last_slash == path_copy) {
++		kfree(path_copy);
++		return;
++	}
++
++	*last_slash = '\0';
++	parent_path = path_copy;
++	name = last_slash + 1;
++
++	/* Skip if parent dir is VFS-redirected */
++	{
++		u32 parent_hash = full_name_hash(NULL, parent_path,
 						 strlen(parent_path));
 		struct zeromount_rule *parent_rule;
 		bool parent_redirected = false;
