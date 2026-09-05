@@ -57,7 +57,7 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 +#endif
 +
  	/*
- diff --git a/fs/namei.c b/fs/namei.c
+diff --git a/fs/namei.c b/fs/namei.c
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -18,6 +18,10 @@
@@ -120,7 +120,7 @@ diff --git a/fs/d_path.c b/fs/d_path.c
  	retval = sb_permission(inode->i_sb, inode, mask);
  	if (retval)
  		return retval;
- diff --git a/fs/proc/base.c b/fs/proc/base.c
+diff --git a/fs/proc/base.c b/fs/proc/base.c
 --- a/fs/proc/base.c
 +++ b/fs/proc/base.c
 @@ -60,3 +60,6 @@
@@ -156,7 +156,7 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 +
  #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
  	if (SUSFS_IS_INODE_OPEN_REDIRECT(path->dentry->d_inode)) {
- diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
 --- a/fs/proc/task_mmu.c
 +++ b/fs/proc/task_mmu.c
 @@ -18,3 +18,6 @@
@@ -176,7 +176,7 @@ diff --git a/fs/d_path.c b/fs/d_path.c
  #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
  		if (inode->i_mapping &&
  			unlikely(test_bit(AS_FLAGS_SUS_KSTAT, &inode->i_mapping->flags) &&
- diff --git a/fs/readdir.c b/fs/readdir.c
+diff --git a/fs/readdir.c b/fs/readdir.c
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
 @@ -28,6 +28,10 @@
@@ -400,7 +400,7 @@ diff --git a/fs/d_path.c b/fs/d_path.c
  	fdput_pos(f);
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (!path_err)
- diff --git a/fs/stat.c b/fs/stat.c
+diff --git a/fs/stat.c b/fs/stat.c
 --- a/fs/stat.c
 +++ b/fs/stat.c
 @@ -18,3 +18,6 @@
@@ -467,7 +467,7 @@ diff --git a/fs/d_path.c b/fs/d_path.c
  	error = filename_lookup(dfd, fname, lookup_flags, &path, NULL);
  	// no putname(fname) here as filename_lookup() has it done for us already;
  #else
- diff --git a/fs/statfs.c b/fs/statfs.c
+diff --git a/fs/statfs.c b/fs/statfs.c
 --- a/fs/statfs.c
 +++ b/fs/statfs.c
 @@ -12,3 +12,6 @@
@@ -491,7 +491,7 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 +#endif
  		path_put(&path);
  		if (retry_estale(error, lookup_flags)) {
- diff --git a/fs/xattr.c b/fs/xattr.c
+diff --git a/fs/xattr.c b/fs/xattr.c
 --- a/fs/xattr.c
 +++ b/fs/xattr.c
 @@ -16,3 +16,6 @@
@@ -514,7 +514,7 @@ diff --git a/fs/d_path.c b/fs/d_path.c
  	return __vfs_getxattr(dentry, dentry->d_inode, name, value, size, 0);
  }
  EXPORT_SYMBOL_NS_GPL(vfs_getxattr, ANDROID_GKI_VFS_EXPORT_ONLY);
- diff --git a/fs/zeromount.c b/fs/zeromount.c
+diff --git a/fs/zeromount.c b/fs/zeromount.c
 new file mode 100644
 index 000000000..0b596ea48
 --- /dev/null
@@ -1123,7 +1123,7 @@ index 000000000..0b596ea48
 +}
 +EXPORT_SYMBOL(zeromount_build_absolute_path);
 +
- struct filename *zeromount_getname_hook(struct filename *name)
++struct filename *zeromount_getname_hook(struct filename *name)
 +{
 +	char *target_path;
 +	struct filename *new_name;
@@ -1629,7 +1629,7 @@ index 000000000..0b596ea48
 +			if (parent_copy) {
 +				char *slash = strrchr(parent_copy, '/');
 +
-				if (slash && slash != parent_copy) {
++				if (slash && slash != parent_copy) {
 +					*slash = '\0';
 +					zm_enter();
 +					if (kern_path(parent_copy, LOOKUP_FOLLOW,
