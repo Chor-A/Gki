@@ -44,7 +44,7 @@ on:
       append_config:
         description: 'Extra literal CONFIG_* lines injected into the defconfig'
         required: false
-        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_OVERLAY_FS=y,CONFIG_KPROBES=y,CONFIG_HAVE_KPROBES=y,CONFIG_KPROBE_EVENTS=y,CONFIG_LRU_GEN=y,CONFIG_LRU_GEN_ENABLED=y,CONFIG_NOMOUNT=y"
+        default: "CONFIG_KSU=y,CONFIG_KSU_NEXT=y,CONFIG_OVERLAY_FS=y,CONFIG_KPROBES=y,CONFIG_HAVE_KPROBES=y,CONFIG_KPROBE_EVENTS=y,CONFIG_LRU_GEN=y,CONFIG_LRU_GEN_ENABLED=y,CONFIG_ZEROMOUNT=y"
       ccache:
         description: 'Accelerate with ccache.'
         type: boolean
@@ -445,14 +445,6 @@ jobs:
           EOF
           echo "✅ Python regex injection with UID-checks completed successfully!"
 
-          echo "=== 4. Setting up NoMount (Manual Method) ==="
-          git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
-          mkdir -p fs/nomount
-          cp -f ../nomount_repo/kernel/src/* fs/nomount/
-          grep -q 'fs/nomount/Kconfig' fs/Kconfig || echo 'source "fs/nomount/Kconfig"' >> fs/Kconfig
-          grep -q 'nomount/' fs/Makefile || echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
-          echo "CONFIG_NOMOUNT=y" >> arch/arm64/configs/gki_defconfig
-
           echo "=== 5. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
 
@@ -463,6 +455,7 @@ jobs:
           echo "CONFIG_KPROBES=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_ZEROMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
           echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> arch/arm64/configs/gki_defconfig
