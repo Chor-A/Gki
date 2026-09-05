@@ -1858,7 +1858,8 @@ jobs:
           print("Injecting fs/namei.c...")
           inject("fs/namei.c", '#include <linux/pagemap.h>', '#include <linux/pagemap.h>\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
           inject("fs/namei.c", 'result->refcnt = 1;\n\t}', 'result->refcnt = 1;\n\t}\n#ifdef CONFIG_ZEROMOUNT\n\tif (!IS_ERR(result)) result = zeromount_getname_hook(result);\n#endif')
-          hk_perm = """{
+          
+          hk_perm = """
           #ifdef CONFIG_ZEROMOUNT
           	if (zeromount_is_injected_file(inode)) {
           		if (mask & MAY_WRITE) return -EACCES;
@@ -1867,8 +1868,8 @@ jobs:
           	if (S_ISDIR(inode->i_mode) && zeromount_is_traversal_allowed(inode, mask)) return 0;
           #endif
           """
-          inject("fs/namei.c", 'int generic_permission(struct inode *inode, int mask)\n{', 'int generic_permission(struct inode *inode, int mask)\n' + hk_perm)
-          inject("fs/namei.c", 'int inode_permission(struct inode *inode, int mask)\n{', 'int inode_permission(struct inode *inode, int mask)\n' + hk_perm)
+          inject("fs/namei.c", 'int generic_permission(struct inode *inode, int mask)\n{\n\tint ret;', 'int generic_permission(struct inode *inode, int mask)\n{\n\tint ret;' + hk_perm)
+          inject("fs/namei.c", 'int inode_permission(struct inode *inode, int mask)\n{\n\tint retval;', 'int inode_permission(struct inode *inode, int mask)\n{\n\tint retval;' + hk_perm)
 
           print("Injecting fs/proc/base.c...")
           inject("fs/proc/base.c", '#include "internal.h"', '#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n#include "internal.h"')
