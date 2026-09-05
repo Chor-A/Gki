@@ -37,15 +37,14 @@ diff --git a/fs/d_path.c b/fs/d_path.c
  static int prepend(char **buffer, int *buflen, const char *str, int namelen)
  {
  	*buflen -= namelen;
-@@ -348,6 +352,25 @@ char *d_path(const struct path *path, char *buf, int buflen)
- 		return nm_path;
- 	}
- #endif
-+
+@@ -265,6 +269,25 @@ char *d_path(const struct path *path, char *buf, int buflen)
+ 	if (path->dentry->d_op && path->dentry->d_op->d_dname &&
+ 	    (!IS_ROOT(path->dentry) || path->dentry != path->mnt->mnt_root))
+ 		return path->dentry->d_op->d_dname(path->dentry, buf, buflen);
+ 
 +#ifdef CONFIG_ZEROMOUNT
 +	if (path->dentry && d_backing_inode(path->dentry)) {
 +		char *v_path = zeromount_get_static_vpath(d_backing_inode(path->dentry));
-+
 +		if (v_path) {
 +			int len = strlen(v_path);
 +			if (buflen < len + 1) {
@@ -60,9 +59,10 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 +		}
 +	}
 +#endif
- 
++
  	/*
  	 * We have various synthetic filesystems that never get mounted.  On
+ 	 * these filesystems dentries are never used for lookup purposes, and
 diff --git a/fs/namei.c b/fs/namei.c
 --- a/fs/namei.c
 +++ b/fs/namei.c
@@ -76,10 +76,10 @@ diff --git a/fs/namei.c b/fs/namei.c
  #if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
  #include <linux/susfs_def.h>
  #endif
-@@ -216,6 +219,11 @@ getname_flags(const char __user *filename, int flags, int *empty)
- 		result = nomount_handle_getname(result);
+@@ -210,6 +213,11 @@ getname_flags(const char __user *filename, int flags, int *empty)
+ 		result->refcnt = 1;
  	}
- #endif
+ 
 +#ifdef CONFIG_ZEROMOUNT
 +	if (!IS_ERR(result)) {
 +		result = zeromount_getname_hook(result);
@@ -88,9 +88,9 @@ diff --git a/fs/namei.c b/fs/namei.c
  	audit_getname(result);
  	return result;
  }
-@@ -370,6 +378,17 @@ int generic_permission(struct inode *inode, int mask)
- 	if (unlikely(nm_perm > 0)) return 0;
- #endif
+@@ -361,6 +369,16 @@ int generic_permission(struct inode *inode, int mask)
+ {
+ 	int ret;
  
 +#ifdef CONFIG_ZEROMOUNT
 +	if (zeromount_is_injected_file(inode)) {
@@ -98,7 +98,6 @@ diff --git a/fs/namei.c b/fs/namei.c
 +			return -EACCES;
 +		return 0;
 +	}
-+
 +	if (S_ISDIR(inode->i_mode) && zeromount_is_traversal_allowed(inode, mask)) {
 +		return 0;
 +	}
@@ -106,9 +105,9 @@ diff --git a/fs/namei.c b/fs/namei.c
  	/*
  	 * Do the basic permission checks.
  	 */
-@@ -475,6 +494,17 @@ int inode_permission(struct inode *inode, int mask)
- 	if (unlikely(nm_perm > 0)) return 0;
- #endif
+@@ -454,6 +472,16 @@ int inode_permission(struct inode *inode, int mask)
+ {
+ 	int retval;
  
 +#ifdef CONFIG_ZEROMOUNT
 +	if (zeromount_is_injected_file(inode)) {
@@ -116,7 +115,6 @@ diff --git a/fs/namei.c b/fs/namei.c
 +			return -EACCES;
 +		return 0;
 +	}
-+
 +	if (S_ISDIR(inode->i_mode) && zeromount_is_traversal_allowed(inode, mask)) {
 +		return 0;
 +	}
@@ -160,10 +158,9 @@ diff --git a/fs/proc/base.c b/fs/proc/base.c
 +		}
 +	}
 +#endif
-+
+ 
  #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
  	if (SUSFS_IS_INODE_OPEN_REDIRECT(path->dentry->d_inode)) {
- 		if (!susfs_open_redirect_spoof_do_proc_readlink(path->dentry->d_inode, tmp, buflen)) {
 diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
 --- a/fs/proc/task_mmu.c
 +++ b/fs/proc/task_mmu.c
@@ -220,7 +217,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +		goto skip_real_iterate;
 +	}
 +#endif
-+
+ 
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
@@ -261,7 +258,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +		goto skip_real_iterate;
 +	}
 +#endif
-+
+ 
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
@@ -302,7 +299,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +		goto skip_real_iterate;
 +	}
 +#endif
-+
+ 
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
@@ -343,7 +340,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +		goto skip_real_iterate;
 +	}
 +#endif
-+
+ 
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
@@ -384,7 +381,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +		goto skip_real_iterate;
 +	}
 +#endif
-+
+ 
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
@@ -604,12 +601,12 @@ index 000000000..0b596ea48
 +	ZM_DBG("bloom: rebuilt (%d rules)\n", count);
 +}
 +
-+struct linux_dirent {
-+	unsigned long	d_ino;
-+	unsigned long	d_off;
-+	unsigned short	d_reclen;
-+	char		d_name[];
-+};
+ struct linux_dirent {
+ 	unsigned long	d_ino;
+ 	unsigned long	d_off;
+ 	unsigned short	d_reclen;
+ 	char		d_name[];
+ };
 +
 +static unsigned long zm_ino_adb = 0;
 +static unsigned long zm_ino_modules = 0;
