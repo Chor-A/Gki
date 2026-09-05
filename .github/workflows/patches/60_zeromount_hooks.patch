@@ -34,11 +34,9 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 +#include <linux/zeromount.h>
 +#endif
  
-@@ -265,6 +268,25 @@ char *d_path(const struct path *path, char *buf, int buflen)
- 	if (path->dentry->d_op && path->dentry->d_op->d_dname &&
- 	    (!IS_ROOT(path->dentry) || path->dentry != path->mnt->mnt_root))
+@@ -267,3 +270,22 @@ char *d_path(const struct path *path, char *buf, int buflen)
  		return path->dentry->d_op->d_dname(path->dentry, buf, buflen);
-+
+  
 +#ifdef CONFIG_ZEROMOUNT
 +	if (path->dentry && d_backing_inode(path->dentry)) {
 +		char *v_path = zeromount_get_static_vpath(d_backing_inode(path->dentry));
@@ -57,9 +55,8 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 +		}
 +	}
 +#endif
-  
++
  	/*
- 	 * We have various synthetic filesystems that never get mounted.  On
 diff --git a/fs/namei.c b/fs/namei.c
 --- a/fs/namei.c
 +++ b/fs/namei.c
@@ -1698,357 +1695,357 @@ index 000000000..0b596ea48
 +		hash_for_each_possible(zeromount_dirs_ht, dir_node,
 +				       node, hash) {
 +			if (strcmp(dir_node->dir_path, v_path) != 0)
-				continue;
-
-			list_for_each_entry_safe(child, tmp_child,
-						 &dir_node->children_names,
-						 list) {
-				if (strcmp(child->name, last_slash + 1) == 0) {
-					list_del_rcu(&child->list);
-					call_rcu(&child->rcu,
-						 zeromount_free_child_rcu);
-					break;
-				}
-			}
-
-			if (list_empty(&dir_node->children_names)) {
-				hash_del_rcu(&dir_node->node);
-				atomic_dec(&zeromount_dirs_count);
-				call_rcu(&dir_node->rcu,
-					 zeromount_free_dir_node_rcu);
-				pruned = true;
-			}
-			break;
-		}
-	} while (pruned);
-
-	for (p = v_path; p < end; p++)
-		if (*p == '\0')
-			*p = '/';
-}
-
-static int zeromount_ioctl_del_rule(unsigned long arg)
-{
-	struct zeromount_ioctl_data data;
-	struct zeromount_rule *rule = NULL;
-	struct hlist_node *tmp;
-	char *v_path_raw, *v_path;
-	int bkt;
-	bool found = false;
-
-	if (copy_from_user(&data, (void __user *)arg, sizeof(data)))
-		return -EFAULT;
-
-	v_path_raw = strndup_user(data.virtual_path, PATH_MAX);
-	if (IS_ERR(v_path_raw))
-		return PTR_ERR(v_path_raw);
-
-	v_path = zeromount_normalize_path(v_path_raw);
-	kfree(v_path_raw);
-	if (!v_path)
-		return -ENOMEM;
-
-	spin_lock(&zeromount_lock);
-	hash_for_each_safe(zeromount_rules_ht, bkt, tmp, rule, node) {
-		if (strcmp(rule->virtual_path, v_path) == 0) {
-			hash_del_rcu(&rule->node);
-			if (rule->real_ino != 0)
-				hash_del_rcu(&rule->ino_node);
-			list_del(&rule->list);
-			found = true;
-			break;
-		}
-	}
-	if (found)
-		zeromount_cleanup_parent_dir(v_path);
-	if (found)
-		atomic_dec(&zeromount_rule_count);
-	zm_bloom_rebuild();
-	spin_unlock(&zeromount_lock);
-
-	if (found && rule)
-		call_rcu(&rule->rcu, zeromount_free_rule_rcu);
-
-	kfree(v_path);
-	return found ? 0 : -ENOENT;
-}
-
-static int zeromount_ioctl_clear_rules(void)
-{
-	struct zeromount_rule *rule;
-	struct zeromount_uid_node *uid_node;
-	struct hlist_node *tmp;
-	int bkt;
-
-	spin_lock(&zeromount_lock);
-
-	hash_for_each_safe(zeromount_rules_ht, bkt, tmp, rule, node) {
-		hash_del_rcu(&rule->node);
-		if (rule->real_ino != 0)
-			hash_del_rcu(&rule->ino_node);
-		list_del(&rule->list);
-		call_rcu(&rule->rcu, zeromount_free_rule_rcu);
-	}
-
-	hash_for_each_safe(zeromount_uid_ht, bkt, tmp, uid_node, node) {
-		hash_del_rcu(&uid_node->node);
-		kfree_rcu(uid_node, rcu);
-	}
-
-	{
-		struct zeromount_dir_node *dir_node;
-		struct zeromount_child_name *child, *tmp_child;
-		int bkt2;
-		struct hlist_node *tmp2;
-
-		hash_for_each_safe(zeromount_dirs_ht, bkt2, tmp2,
-				   dir_node, node) {
-			hash_del_rcu(&dir_node->node);
-			atomic_dec(&zeromount_dirs_count);
-			list_for_each_entry_safe(child, tmp_child,
-						 &dir_node->children_names,
-						 list) {
-				list_del_rcu(&child->list);
-				call_rcu(&child->rcu,
-					 zeromount_free_child_rcu);
-			}
-			call_rcu(&dir_node->rcu,
-				 zeromount_free_dir_node_rcu);
-		}
-	}
-
-	atomic_set(&zeromount_rule_count, 0);
-	bitmap_zero(zm_bloom, ZM_BLOOM_BITS);
-	spin_unlock(&zeromount_lock);
-	return 0;
-}
-
-static int zeromount_ioctl_list_rules(unsigned long arg)
-{
-	struct zeromount_rule *rule;
-	char *kbuf;
-	int ret = 0;
-	size_t len = 0;
-	size_t remaining;
-	char __user *ubuf = (char __user *)arg;
-
-	kbuf = vmalloc(MAX_LIST_BUFFER_SIZE);
-	if (!kbuf)
-		return -ENOMEM;
-
-	memset(kbuf, 0, MAX_LIST_BUFFER_SIZE);
-	spin_lock(&zeromount_lock);
-
-	list_for_each_entry(rule, &zeromount_rules_list, list) {
-		remaining = MAX_LIST_BUFFER_SIZE - len;
-		if (remaining <= 1) {
-			ret = -ENOBUFS;
-			break;
-		}
-		len += scnprintf(kbuf + len, remaining, "%s->%s\n",
-				 rule->real_path, rule->virtual_path);
-	}
-
-	spin_unlock(&zeromount_lock);
-
-	if (ret == -ENOBUFS) {
-		vfree(kbuf);
-		return ret;
-	}
-
-	if (copy_to_user(ubuf, kbuf, len))
-		ret = -EFAULT;
-	else
-		ret = len;
-
-	vfree(kbuf);
-	return ret;
-}
-
-static int zeromount_ioctl_add_uid(unsigned long arg)
-{
-	unsigned int uid;
-	struct zeromount_uid_node *entry;
-
-	if (copy_from_user(&uid, (void __user *)arg, sizeof(uid)))
-		return -EFAULT;
-	if (zeromount_is_uid_blocked(uid))
-		return -EEXIST;
-
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
-	if (!entry)
-		return -ENOMEM;
-
-	entry->uid = uid;
-
-	spin_lock(&zeromount_lock);
-	hash_add_rcu(zeromount_uid_ht, &entry->node, uid);
-	spin_unlock(&zeromount_lock);
-
-	return 0;
-}
-
-static int zeromount_ioctl_del_uid(unsigned long arg)
-{
-	unsigned int uid;
-	struct zeromount_uid_node *entry;
-	struct hlist_node *tmp;
-	int bkt;
-	bool found = false;
-
-	if (copy_from_user(&uid, (void __user *)arg, sizeof(uid)))
-		return -EFAULT;
-
-	spin_lock(&zeromount_lock);
-	hash_for_each_safe(zeromount_uid_ht, bkt, tmp, entry, node) {
-		if (entry->uid == uid) {
-			hash_del_rcu(&entry->node);
-			found = true;
-			break;
-		}
-	}
-	spin_unlock(&zeromount_lock);
-
-	if (found && entry)
-		kfree_rcu(entry, rcu);
-
-	return found ? 0 : -ENOENT;
-}
-
-static int zeromount_ioctl_enable(void)
-{
-	atomic_set(&zeromount_enabled, 1);
-	return 0;
-}
-
-static int zeromount_ioctl_disable(void)
-{
-	atomic_set(&zeromount_enabled, 0);
-	return 0;
-}
-
-static long zeromount_ioctl(struct file *filp, unsigned int cmd,
-			    unsigned long arg)
-{
-	if (_IOC_TYPE(cmd) != ZEROMOUNT_MAGIC_CODE)
-		return -ENOTTY;
-
-	if (cmd != ZEROMOUNT_IOC_GET_VERSION) {
-		if (!capable(CAP_SYS_ADMIN))
-			return -EPERM;
-	}
-
-	switch (cmd) {
-	case ZEROMOUNT_IOC_GET_VERSION:	return ZEROMOUNT_VERSION;
-	case ZEROMOUNT_IOC_ADD_RULE:	return zeromount_ioctl_add_rule(arg);
-	case ZEROMOUNT_IOC_DEL_RULE:	return zeromount_ioctl_del_rule(arg);
-	case ZEROMOUNT_IOC_CLEAR_ALL:	return zeromount_ioctl_clear_rules();
-	case ZEROMOUNT_IOC_ADD_UID:	return zeromount_ioctl_add_uid(arg);
-	case ZEROMOUNT_IOC_DEL_UID:	return zeromount_ioctl_del_uid(arg);
-	case ZEROMOUNT_IOC_GET_LIST:	return zeromount_ioctl_list_rules(arg);
-	case ZEROMOUNT_IOC_ENABLE:	return zeromount_ioctl_enable();
-	case ZEROMOUNT_IOC_DISABLE:	return zeromount_ioctl_disable();
-	case ZEROMOUNT_IOC_REFRESH:
-		zeromount_force_refresh_all();
-		return 0;
-	case ZEROMOUNT_IOC_GET_STATUS:	return atomic_read(&zeromount_enabled);
-	default:			return -EINVAL;
-	}
-}
-
-static struct kobject *zeromount_kobj;
-
-static ssize_t debug_show(struct kobject *kobj, struct kobj_attribute *attr,
-			  char *buf)
-{
-	return sprintf(buf, "%d\n", zeromount_debug_level);
-}
-
-static ssize_t debug_store(struct kobject *kobj, struct kobj_attribute *attr,
-			   const char *buf, size_t count)
-{
-	int val;
-
-	if (kstrtoint(buf, 10, &val) < 0)
-		return -EINVAL;
-	if (val < 0 || val > 2)
-		return -EINVAL;
-	zeromount_debug_level = val;
-	return count;
-}
-
-static struct kobj_attribute debug_attr =
-	__ATTR(debug, 0600, debug_show, debug_store);
-
-static struct attribute *zeromount_attrs[] = {
-	&debug_attr.attr,
-	NULL,
-};
-
-static struct attribute_group zeromount_attr_group = {
-	.attrs = zeromount_attrs,
-};
-
-static int zeromount_dev_open(struct inode *inode, struct file *file)
-{
-	if (!uid_eq(current_euid(), GLOBAL_ROOT_UID))
-		return -EPERM;
-	return 0;
-}
-
-static const struct file_operations zeromount_fops = {
-	.owner		= THIS_MODULE,
-	.open		= zeromount_dev_open,
-	.unlocked_ioctl	= zeromount_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= zeromount_ioctl,
-#endif
-};
-
-static struct miscdevice zeromount_device = {
-	.minor	= MISC_DYNAMIC_MINOR,
-	.name	= "zeromount",
-	.fops	= &zeromount_fops,
-	.mode	= 0600,
-};
-
-static int zeromount_reboot_notify(struct notifier_block *nb,
-				   unsigned long action, void *data)
-{
-	atomic_set(&zeromount_enabled, 0);
-	synchronize_rcu();
-	return NOTIFY_OK;
-}
-
-static struct notifier_block zeromount_reboot_nb = {
-	.notifier_call = zeromount_reboot_notify,
-};
-
-static int __init __used zeromount_init(void)
-{
-	int ret;
-
-	spin_lock_init(&zeromount_lock);
-	register_reboot_notifier(&zeromount_reboot_nb);
-
-	ret = misc_register(&zeromount_device);
-	if (ret)
-		return ret;
-
-	zeromount_kobj = kobject_create_and_add("zeromount", kernel_kobj);
-	if (zeromount_kobj) {
-		ret = sysfs_create_group(zeromount_kobj,
-					&zeromount_attr_group);
-		if (ret)
-			pr_warn("ZeroMount: sysfs group creation failed: %d\n",
-				ret);
-	}
-
-	ZM_INFO("Loaded (debug=%d)\n", zeromount_debug_level);
-	return 0;
-}
-fs_initcall(zeromount_init);
-
++				continue;
++
++			list_for_each_entry_safe(child, tmp_child,
++						 &dir_node->children_names,
++						 list) {
++				if (strcmp(child->name, last_slash + 1) == 0) {
++					list_del_rcu(&child->list);
++					call_rcu(&child->rcu,
++						 zeromount_free_child_rcu);
++					break;
++				}
++			}
++
++			if (list_empty(&dir_node->children_names)) {
++				hash_del_rcu(&dir_node->node);
++				atomic_dec(&zeromount_dirs_count);
++				call_rcu(&dir_node->rcu,
++					 zeromount_free_dir_node_rcu);
++				pruned = true;
++			}
++			break;
++		}
++	} while (pruned);
++
++	for (p = v_path; p < end; p++)
++		if (*p == '\0')
++			*p = '/';
++}
++
++static int zeromount_ioctl_del_rule(unsigned long arg)
++{
++	struct zeromount_ioctl_data data;
++	struct zeromount_rule *rule = NULL;
++	struct hlist_node *tmp;
++	char *v_path_raw, *v_path;
++	int bkt;
++	bool found = false;
++
++	if (copy_from_user(&data, (void __user *)arg, sizeof(data)))
++		return -EFAULT;
++
++	v_path_raw = strndup_user(data.virtual_path, PATH_MAX);
++	if (IS_ERR(v_path_raw))
++		return PTR_ERR(v_path_raw);
++
++	v_path = zeromount_normalize_path(v_path_raw);
++	kfree(v_path_raw);
++	if (!v_path)
++		return -ENOMEM;
++
++	spin_lock(&zeromount_lock);
++	hash_for_each_safe(zeromount_rules_ht, bkt, tmp, rule, node) {
++		if (strcmp(rule->virtual_path, v_path) == 0) {
++			hash_del_rcu(&rule->node);
++			if (rule->real_ino != 0)
++				hash_del_rcu(&rule->ino_node);
++			list_del(&rule->list);
++			found = true;
++			break;
++		}
++	}
++	if (found)
++		zeromount_cleanup_parent_dir(v_path);
++	if (found)
++		atomic_dec(&zeromount_rule_count);
++	zm_bloom_rebuild();
++	spin_unlock(&zeromount_lock);
++
++	if (found && rule)
++		call_rcu(&rule->rcu, zeromount_free_rule_rcu);
++
++	kfree(v_path);
++	return found ? 0 : -ENOENT;
++}
++
++static int zeromount_ioctl_clear_rules(void)
++{
++	struct zeromount_rule *rule;
++	struct zeromount_uid_node *uid_node;
++	struct hlist_node *tmp;
++	int bkt;
++
++	spin_lock(&zeromount_lock);
++
++	hash_for_each_safe(zeromount_rules_ht, bkt, tmp, rule, node) {
++		hash_del_rcu(&rule->node);
++		if (rule->real_ino != 0)
++			hash_del_rcu(&rule->ino_node);
++		list_del(&rule->list);
++		call_rcu(&rule->rcu, zeromount_free_rule_rcu);
++	}
++
++	hash_for_each_safe(zeromount_uid_ht, bkt, tmp, uid_node, node) {
++		hash_del_rcu(&uid_node->node);
++		kfree_rcu(uid_node, rcu);
++	}
++
++	{
++		struct zeromount_dir_node *dir_node;
++		struct zeromount_child_name *child, *tmp_child;
++		int bkt2;
++		struct hlist_node *tmp2;
++
++		hash_for_each_safe(zeromount_dirs_ht, bkt2, tmp2,
++				   dir_node, node) {
++			hash_del_rcu(&dir_node->node);
++			atomic_dec(&zeromount_dirs_count);
++			list_for_each_entry_safe(child, tmp_child,
++						 &dir_node->children_names,
++						 list) {
++				list_del_rcu(&child->list);
++				call_rcu(&child->rcu,
++					 zeromount_free_child_rcu);
++			}
++			call_rcu(&dir_node->rcu,
++				 zeromount_free_dir_node_rcu);
++		}
++	}
++
++	atomic_set(&zeromount_rule_count, 0);
++	bitmap_zero(zm_bloom, ZM_BLOOM_BITS);
++	spin_unlock(&zeromount_lock);
++	return 0;
++}
++
++static int zeromount_ioctl_list_rules(unsigned long arg)
++{
++	struct zeromount_rule *rule;
++	char *kbuf;
++	int ret = 0;
++	size_t len = 0;
++	size_t remaining;
++	char __user *ubuf = (char __user *)arg;
++
++	kbuf = vmalloc(MAX_LIST_BUFFER_SIZE);
++	if (!kbuf)
++		return -ENOMEM;
++
++	memset(kbuf, 0, MAX_LIST_BUFFER_SIZE);
++	spin_lock(&zeromount_lock);
++
++	list_for_each_entry(rule, &zeromount_rules_list, list) {
++		remaining = MAX_LIST_BUFFER_SIZE - len;
++		if (remaining <= 1) {
++			ret = -ENOBUFS;
++			break;
++		}
++		len += scnprintf(kbuf + len, remaining, "%s->%s\n",
++				 rule->real_path, rule->virtual_path);
++	}
++
++	spin_unlock(&zeromount_lock);
++
++	if (ret == -ENOBUFS) {
++		vfree(kbuf);
++		return ret;
++	}
++
++	if (copy_to_user(ubuf, kbuf, len))
++		ret = -EFAULT;
++	else
++		ret = len;
++
++	vfree(kbuf);
++	return ret;
++}
++
++static int zeromount_ioctl_add_uid(unsigned long arg)
++{
++	unsigned int uid;
++	struct zeromount_uid_node *entry;
++
++	if (copy_from_user(&uid, (void __user *)arg, sizeof(uid)))
++		return -EFAULT;
++	if (zeromount_is_uid_blocked(uid))
++		return -EEXIST;
++
++	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
++	if (!entry)
++		return -ENOMEM;
++
++	entry->uid = uid;
++
++	spin_lock(&zeromount_lock);
++	hash_add_rcu(zeromount_uid_ht, &entry->node, uid);
++	spin_unlock(&zeromount_lock);
++
++	return 0;
++}
++
++static int zeromount_ioctl_del_uid(unsigned long arg)
++{
++	unsigned int uid;
++	struct zeromount_uid_node *entry;
++	struct hlist_node *tmp;
++	int bkt;
++	bool found = false;
++
++	if (copy_from_user(&uid, (void __user *)arg, sizeof(uid)))
++		return -EFAULT;
++
++	spin_lock(&zeromount_lock);
++	hash_for_each_safe(zeromount_uid_ht, bkt, tmp, entry, node) {
++		if (entry->uid == uid) {
++			hash_del_rcu(&entry->node);
++			found = true;
++			break;
++		}
++	}
++	spin_unlock(&zeromount_lock);
++
++	if (found && entry)
++		kfree_rcu(entry, rcu);
++
++	return found ? 0 : -ENOENT;
++}
++
++static int zeromount_ioctl_enable(void)
++{
++	atomic_set(&zeromount_enabled, 1);
++	return 0;
++}
++
++static int zeromount_ioctl_disable(void)
++{
++	atomic_set(&zeromount_enabled, 0);
++	return 0;
++}
++
++static long zeromount_ioctl(struct file *filp, unsigned int cmd,
++			    unsigned long arg)
++{
++	if (_IOC_TYPE(cmd) != ZEROMOUNT_MAGIC_CODE)
++		return -ENOTTY;
++
++	if (cmd != ZEROMOUNT_IOC_GET_VERSION) {
++		if (!capable(CAP_SYS_ADMIN))
++			return -EPERM;
++	}
++
++	switch (cmd) {
++	case ZEROMOUNT_IOC_GET_VERSION:	return ZEROMOUNT_VERSION;
++	case ZEROMOUNT_IOC_ADD_RULE:	return zeromount_ioctl_add_rule(arg);
++	case ZEROMOUNT_IOC_DEL_RULE:	return zeromount_ioctl_del_rule(arg);
++	case ZEROMOUNT_IOC_CLEAR_ALL:	return zeromount_ioctl_clear_rules();
++	case ZEROMOUNT_IOC_ADD_UID:	return zeromount_ioctl_add_uid(arg);
++	case ZEROMOUNT_IOC_DEL_UID:	return zeromount_ioctl_del_uid(arg);
++	case ZEROMOUNT_IOC_GET_LIST:	return zeromount_ioctl_list_rules(arg);
++	case ZEROMOUNT_IOC_ENABLE:	return zeromount_ioctl_enable();
++	case ZEROMOUNT_IOC_DISABLE:	return zeromount_ioctl_disable();
++	case ZEROMOUNT_IOC_REFRESH:
++		zeromount_force_refresh_all();
++		return 0;
++	case ZEROMOUNT_IOC_GET_STATUS:	return atomic_read(&zeromount_enabled);
++	default:			return -EINVAL;
++	}
++}
++
++static struct kobject *zeromount_kobj;
++
++static ssize_t debug_show(struct kobject *kobj, struct kobj_attribute *attr,
++			  char *buf)
++{
++	return sprintf(buf, "%d\n", zeromount_debug_level);
++}
++
++static ssize_t debug_store(struct kobject *kobj, struct kobj_attribute *attr,
++			   const char *buf, size_t count)
++{
++	int val;
++
++	if (kstrtoint(buf, 10, &val) < 0)
++		return -EINVAL;
++	if (val < 0 || val > 2)
++		return -EINVAL;
++	zeromount_debug_level = val;
++	return count;
++}
++
++static struct kobj_attribute debug_attr =
++	__ATTR(debug, 0600, debug_show, debug_store);
++
++static struct attribute *zeromount_attrs[] = {
++	&debug_attr.attr,
++	NULL,
++};
++
++static struct attribute_group zeromount_attr_group = {
++	.attrs = zeromount_attrs,
++};
++
++static int zeromount_dev_open(struct inode *inode, struct file *file)
++{
++	if (!uid_eq(current_euid(), GLOBAL_ROOT_UID))
++		return -EPERM;
++	return 0;
++}
++
++static const struct file_operations zeromount_fops = {
++	.owner		= THIS_MODULE,
++	.open		= zeromount_dev_open,
++	.unlocked_ioctl	= zeromount_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl	= zeromount_ioctl,
++#endif
++};
++
++static struct miscdevice zeromount_device = {
++	.minor	= MISC_DYNAMIC_MINOR,
++	.name	= "zeromount",
++	.fops	= &zeromount_fops,
++	.mode	= 0600,
++};
++
++static int zeromount_reboot_notify(struct notifier_block *nb,
++				   unsigned long action, void *data)
++{
++	atomic_set(&zeromount_enabled, 0);
++	synchronize_rcu();
++	return NOTIFY_OK;
++}
++
++static struct notifier_block zeromount_reboot_nb = {
++	.notifier_call = zeromount_reboot_notify,
++};
++
++static int __init __used zeromount_init(void)
++{
++	int ret;
++
++	spin_lock_init(&zeromount_lock);
++	register_reboot_notifier(&zeromount_reboot_nb);
++
++	ret = misc_register(&zeromount_device);
++	if (ret)
++		return ret;
++
++	zeromount_kobj = kobject_create_and_add("zeromount", kernel_kobj);
++	if (zeromount_kobj) {
++		ret = sysfs_create_group(zeromount_kobj,
++					&zeromount_attr_group);
++		if (ret)
++			pr_warn("ZeroMount: sysfs group creation failed: %d\n",
++				ret);
++	}
++
++	ZM_INFO("Loaded (debug=%d)\n", zeromount_debug_level);
++	return 0;
++}
++fs_initcall(zeromount_init);
++
 diff --git a/include/linux/zeromount.h b/include/linux/zeromount.h
 new file mode 100644
 index 000000000..01fd6aca0
@@ -2240,18 +2237,18 @@ index 000000000..01fd6aca0
 +static inline void zeromount_inject_dents64(struct file *f, void __user **d,
 +					    int *c, loff_t *p) {}
 +static inline void zeromount_inject_dents(struct file *f, void __user **d,
-+					  int *c, loff_t *p) {}
-+static inline char *zeromount_get_virtual_path_for_inode(struct inode *inode) { return NULL; }
-+static inline char *zeromount_get_static_vpath(struct inode *inode) { return NULL; }
-+static inline void zeromount_spoof_mmap_metadata(struct inode *inode,
-+						 dev_t *dev,
-+						 unsigned long *ino) {}
-+static inline bool zeromount_is_traversal_allowed(struct inode *inode, int mask) { return false; }
-+static inline bool zeromount_is_injected_file(struct inode *inode) { return false; }
-+static inline bool zeromount_is_uid_blocked(uid_t uid) { return false; }
-+static inline int zeromount_spoof_statfs(const char __user *p, struct kstatfs *b) { return 0; }
-+static inline ssize_t zeromount_spoof_xattr(struct dentry *d, const char *n,
-+					    void *v, size_t s) { return -EOPNOTSUPP; }
-+#endif
-+
-+#endif /* _LINUX_ZEROMOUNT_H */
+					  int *c, loff_t *p) {}
+static inline char *zeromount_get_virtual_path_for_inode(struct inode *inode) { return NULL; }
+static inline char *zeromount_get_static_vpath(struct inode *inode) { return NULL; }
+static inline void zeromount_spoof_mmap_metadata(struct inode *inode,
+						 dev_t *dev,
+						 unsigned long *ino) {}
+static inline bool zeromount_is_traversal_allowed(struct inode *inode, int mask) { return false; }
+static inline bool zeromount_is_injected_file(struct inode *inode) { return false; }
+static inline bool zeromount_is_uid_blocked(uid_t uid) { return false; }
+static inline int zeromount_spoof_statfs(const char __user *p, struct kstatfs *b) { return 0; }
+static inline ssize_t zeromount_spoof_xattr(struct dentry *d, const char *n,
+					    void *v, size_t s) { return -EOPNOTSUPP; }
+#endif
+
+#endif /* _LINUX_ZEROMOUNT_H */
