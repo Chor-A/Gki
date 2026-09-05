@@ -145,7 +145,6 @@ jobs:
                 if [ -f "$patch_file" ]; then
                   echo "Applying $patch_file..."
                   sed -i 's/\r$//' "$patch_file"
-                  sed -i 's/^$/ /g' "$patch_file"
                   if git apply --verbose --ignore-whitespace --whitespace=nowarn "$patch_file"; then
                     echo "Applied via git apply"
                   elif patch -p1 -N --no-backup-if-mismatch < "$patch_file"; then
