@@ -1,7 +1,7 @@
 diff --git a/fs/Kconfig b/fs/Kconfig
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
-@@ -348,6 +348,13 @@ source "fs/unicode/Kconfig"
+@@ -350,6 +350,13 @@ source "fs/unicode/Kconfig"
  config IO_WQ
  	bool
  
@@ -18,7 +18,7 @@ diff --git a/fs/Kconfig b/fs/Kconfig
 diff --git a/fs/Makefile b/fs/Makefile
 --- a/fs/Makefile
 +++ b/fs/Makefile
-@@ -137,3 +137,4 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
+@@ -139,4 +139,5 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
  obj-$(CONFIG_EROFS_FS)		+= erofs/
  obj-$(CONFIG_VBOXSF_FS)		+= vboxsf/
  obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
@@ -67,17 +67,18 @@ diff --git a/fs/d_path.c b/fs/d_path.c
 diff --git a/fs/namei.c b/fs/namei.c
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -43,6 +43,9 @@
- #ifdef CONFIG_KSU_SUSFS
- #include <linux/susfs.h>
- #endif
+@@ -18,6 +18,10 @@
+ #include <linux/namei.h>
+ #include <linux/quotaops.h>
+ #include <linux/pagemap.h>
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
- #if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
- #include <linux/susfs_def.h>
- #endif
-@@ -207,6 +210,12 @@ getname_flags(const char __user *filename, int flags, int *empty)
++
+ #include <linux/fsnotify.h>
+ #include <linux/personality.h>
+ #include <linux/security.h>
+@@ -207,6 +211,12 @@ getname_flags(const char __user *filename, int flags, int *empty)
  		}
  		result->refcnt = 1;
  	}
@@ -90,7 +91,7 @@ diff --git a/fs/namei.c b/fs/namei.c
  
  	audit_getname(result);
  	return result;
-@@ -357,6 +366,17 @@ int generic_permission(struct inode *inode, int mask)
+@@ -357,6 +367,17 @@ int generic_permission(struct inode *inode, int mask)
  {
  	int ret;
  
@@ -108,7 +109,7 @@ diff --git a/fs/namei.c b/fs/namei.c
  	/*
  	 * Do the basic permission checks.
  	 */
-@@ -450,6 +470,17 @@ int inode_permission(struct inode *inode, int mask)
+@@ -450,6 +471,17 @@ int inode_permission(struct inode *inode, int mask)
  {
  	int retval;
  
@@ -129,17 +130,18 @@ diff --git a/fs/namei.c b/fs/namei.c
 diff --git a/fs/proc/base.c b/fs/proc/base.c
 --- a/fs/proc/base.c
 +++ b/fs/proc/base.c
-@@ -102,6 +102,9 @@
- #if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
- #include <linux/susfs_def.h>
- #endif // #if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+@@ -60,6 +60,10 @@
+ #include <linux/mman.h>
+ #include <linux/sched/mm.h>
+ #include <linux/sched/coredump.h>
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
- 
- #include <trace/events/oom.h>
- #include "internal.h"
-@@ -1835,6 +1838,25 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
++
+ #include <linux/sched/stat.h>
+ #include <linux/posix-timers.h>
+ #include <linux/tracehook.h>
+@@ -1835,5 +1839,25 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
  	if (!tmp)
  		return -ENOMEM;
  
@@ -162,23 +164,24 @@ diff --git a/fs/proc/base.c b/fs/proc/base.c
 +		}
 +	}
 +#endif
++
  #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
  	if (SUSFS_IS_INODE_OPEN_REDIRECT(path->dentry->d_inode)) {
- 		if (!susfs_open_redirect_spoof_do_proc_readlink(path->dentry->d_inode, tmp, buflen)) {
 diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
 --- a/fs/proc/task_mmu.c
 +++ b/fs/proc/task_mmu.c
-@@ -23,6 +23,9 @@
- #if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
- #include <linux/susfs_def.h>
- #endif // #if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+@@ -19,6 +19,10 @@
+ #include <linux/shmem_fs.h>
+ #include <linux/uaccess.h>
+ #include <linux/pkeys.h>
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
++
  
  #include <asm/elf.h>
  #include <asm/tlb.h>
-@@ -369,6 +372,9 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
+@@ -369,6 +373,9 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
  		dev = inode->i_sb->s_dev;
  		ino = inode->i_ino;
  		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
@@ -191,17 +194,18 @@ diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
 diff --git a/fs/readdir.c b/fs/readdir.c
 --- a/fs/readdir.c
 +++ b/fs/readdir.c
-@@ -28,6 +28,9 @@
+@@ -28,6 +28,10 @@
  extern int susfs_get_data_path(struct path *path);
  extern bool susfs_is_inode_sus_path(struct inode *inode);
  #endif
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
++
  /*
   * Note the "unsafe_put_user() semantics: we goto a
   * label for errors.
-@@ -190,6 +193,9 @@ SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
+@@ -190,6 +194,9 @@ SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
  		.ctx.actor = fillonedir,
  		.dirent = dirent
  	};
@@ -211,7 +215,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	int path_err = -EINVAL;
  	struct path path;
-@@ -199,6 +205,13 @@ SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
+@@ -199,6 +206,13 @@ SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
  	if (!f.file)
  		return -EBADF;
  
@@ -225,7 +229,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
-@@ -215,6 +228,16 @@ orig_flow:
+@@ -215,6 +229,17 @@ orig_flow:
  	if (buf.result)
  		error = buf.result;
  
@@ -239,10 +243,11 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +	}
 +zm_out:
 +#endif
++
  	fdput_pos(f);
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (!path_err)
-@@ -323,6 +346,9 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -323,6 +348,9 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
  		.current_dir = dirent
  	};
  	int error;
@@ -252,7 +257,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	int path_err = -EINVAL;
  	struct path path;
-@@ -332,6 +358,13 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -332,6 +360,13 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
  	if (!f.file)
  		return -EBADF;
  
@@ -266,7 +271,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
-@@ -355,6 +388,16 @@ orig_flow:
+@@ -355,6 +390,17 @@ orig_flow:
  		else
  			error = count - buf.count;
  	}
@@ -280,10 +285,11 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +	}
 +zm_out:
 +#endif
++
  	fdput_pos(f);
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (!path_err)
-@@ -444,6 +487,9 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
+@@ -444,6 +490,9 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
  		.current_dir = dirent
  	};
  	int error;
@@ -293,7 +299,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	int path_err = -EINVAL;
  	struct path path;
-@@ -453,6 +499,13 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
+@@ -453,6 +502,13 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
  	if (!f.file)
  		return -EBADF;
  
@@ -307,7 +313,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
-@@ -477,6 +530,16 @@ orig_flow:
+@@ -477,6 +533,17 @@ orig_flow:
  		else
  			error = count - buf.count;
  	}
@@ -321,10 +327,11 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +	}
 +zm_out:
 +#endif
++
  	fdput_pos(f);
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (!path_err)
-@@ -565,6 +628,9 @@ COMPAT_SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
+@@ -565,6 +632,9 @@ COMPAT_SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
  		.ctx.actor = compat_fillonedir,
  		.dirent = dirent
  	};
@@ -334,7 +341,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	int path_err = -EINVAL;
  	struct path path;
-@@ -574,6 +640,13 @@ COMPAT_SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
+@@ -574,6 +644,13 @@ COMPAT_SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
  	if (!f.file)
  		return -EBADF;
  
@@ -348,7 +355,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
-@@ -588,6 +661,16 @@ orig_flow:
+@@ -588,6 +665,17 @@ orig_flow:
  	if (buf.result)
  		error = buf.result;
  
@@ -362,10 +369,11 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +	}
 +zm_out:
 +#endif
++
  	fdput_pos(f);
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (!path_err)
-@@ -688,6 +771,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -688,6 +776,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
  		.count = count
  	};
  	int error;
@@ -375,7 +383,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	int path_err = -EINVAL;
  	struct path path;
-@@ -697,6 +783,13 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
+@@ -697,6 +788,13 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
  	if (!f.file)
  		return -EBADF;
  
@@ -389,7 +397,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
-@@ -720,6 +813,16 @@ orig_flow:
+@@ -720,6 +818,17 @@ orig_flow:
  		else
  			error = count - buf.count;
  	}
@@ -403,23 +411,25 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +	}
 +zm_out:
 +#endif
++
  	fdput_pos(f);
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (!path_err)
 diff --git a/fs/stat.c b/fs/stat.c
 --- a/fs/stat.c
 +++ b/fs/stat.c
-@@ -20,6 +20,9 @@
+@@ -18,6 +18,10 @@
+ #include <linux/syscalls.h>
+ #include <linux/pagemap.h>
+ #include <linux/compat.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#endif
++
  
  #ifdef CONFIG_KSU_SUSFS
  #include <linux/susfs.h>
-+#endif
-+#ifdef CONFIG_ZEROMOUNT
-+#include <linux/zeromount.h>
- #endif
- #ifdef CONFIG_KSU_SUSFS
- #include <linux/susfs_def.h>
-@@ -226,6 +229,42 @@ int vfs_fstat(int fd, struct kstat *stat)
+@@ -226,6 +230,38 @@ int vfs_fstat(int fd, struct kstat *stat)
   *
   * 0 will be returned on success, and a -ve error code if unsuccessful.
   */
@@ -458,7 +468,7 @@ diff --git a/fs/stat.c b/fs/stat.c
  
  #ifdef CONFIG_KSU_SUSFS
  extern struct static_key_true ksu_su_compat_enabled;
-@@ -262,6 +301,16 @@ static int vfs_statx(int dfd, const char __user *filename, int flags,
+@@ -262,6 +298,17 @@ static int vfs_statx(int dfd, const char __user *filename, int flags,
  	}
  
  orig_flow:
@@ -472,23 +482,25 @@ diff --git a/fs/stat.c b/fs/stat.c
 +		}
 +	}
 +#endif
++
  	error = filename_lookup(dfd, fname, lookup_flags, &path, NULL);
  	// no putname(fname) here as filename_lookup() has it done for us already;
  #else
 diff --git a/fs/statfs.c b/fs/statfs.c
 --- a/fs/statfs.c
 +++ b/fs/statfs.c
-@@ -14,6 +14,9 @@
- #include "mount.h"
- #endif // #if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
- 
+@@ -11,6 +11,10 @@
+ #include <linux/statfs.h>
+ #include <linux/export.h>
+ #include <linux/user_namespace.h>
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
++
+ 
  #include "internal.h"
  
- static int flags_by_mnt(int mnt_flags)
-@@ -148,7 +151,14 @@ int user_statfs(const char __user *pathname, struct kstatfs *st)
+@@ -148,6 +152,13 @@ int user_statfs(const char __user *pathname, struct kstatfs *st)
  retry:
  	error = user_path_at(AT_FDCWD, pathname, lookup_flags, &path);
  	if (!error) {
@@ -502,21 +514,21 @@ diff --git a/fs/statfs.c b/fs/statfs.c
 +#endif
  		path_put(&path);
  		if (retry_estale(error, lookup_flags)) {
- 			lookup_flags |= LOOKUP_REVAL;
 diff --git a/fs/xattr.c b/fs/xattr.c
 --- a/fs/xattr.c
 +++ b/fs/xattr.c
-@@ -25,6 +25,9 @@
- #include <linux/posix_acl_xattr.h>
- 
- #include <linux/uaccess.h>
+@@ -15,6 +15,10 @@
+ #include <linux/export.h>
+ #include <linux/fsnotify.h>
+ #include <linux/audit.h>
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
- 
- static const char *
- strcmp_prefix(const char *a, const char *a_prefix)
-@@ -404,6 +407,12 @@ EXPORT_SYMBOL(__vfs_getxattr);
++
+ #include <linux/security.h>
+ #include <linux/ima.h>
+ #include <linux/evm.h>
+@@ -404,6 +408,12 @@ EXPORT_SYMBOL(__vfs_getxattr);
  ssize_t
  vfs_getxattr(struct dentry *dentry, const char *name, void *value, size_t size)
  {
