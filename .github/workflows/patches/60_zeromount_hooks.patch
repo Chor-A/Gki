@@ -18,7 +18,8 @@ diff --git a/fs/Kconfig b/fs/Kconfig
 diff --git a/fs/Makefile b/fs/Makefile
 --- a/fs/Makefile
 +++ b/fs/Makefile
-@@ -139,4 +139,5 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
+@@ -139,4 +139,5 @@
+ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
  obj-$(CONFIG_EROFS_FS)		+= erofs/
  obj-$(CONFIG_VBOXSF_FS)		+= vboxsf/
  obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
@@ -37,7 +38,7 @@ diff --git a/fs/d_path.c b/fs/d_path.c
  static int prepend(char **buffer, int *buflen, const char *str, int namelen)
  {
  	*buflen -= namelen;
-@@ -265,6 +269,25 @@ char *d_path(const struct path *path, char *buf, int buflen)
+@@ -265,7 +269,26 @@ char *d_path(const struct path *path, char *buf, int buflen)
  	if (path->dentry->d_op && path->dentry->d_op->d_dname &&
  	    (!IS_ROOT(path->dentry) || path->dentry != path->mnt->mnt_root))
  		return path->dentry->d_op->d_dname(path->dentry, buf, buflen);
@@ -351,7 +352,7 @@ diff --git a/fs/readdir.c b/fs/readdir.c
 +		goto skip_real_iterate;
 +	}
 +#endif
-+
+ 
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
  		path_err = susfs_get_data_path(&path);
@@ -618,12 +619,12 @@ index 000000000..0b596ea48
 +	ZM_DBG("bloom: rebuilt (%d rules)\n", count);
 +}
 +
-+struct linux_dirent {
-+	unsigned long	d_ino;
-+	unsigned long	d_off;
-+	unsigned short	d_reclen;
-+	char		d_name[];
-+};
+ struct linux_dirent {
+ 	unsigned long	d_ino;
+ 	unsigned long	d_off;
+ 	unsigned short	d_reclen;
+ 	char		d_name[];
+ };
 +
 +static unsigned long zm_ino_adb = 0;
 +static unsigned long zm_ino_modules = 0;
@@ -1571,10 +1572,10 @@ index 000000000..0b596ea48
 +		}
 +	}
 +
-+unlock_out:
-+	spin_unlock(&zeromount_lock);
-+	kfree(path_copy);
-+}
+ unlock_out:
+ 	spin_unlock(&zeromount_lock);
+ 	kfree(path_copy);
+ }
 +
 +static int zeromount_ioctl_add_rule(unsigned long arg)
 +{
