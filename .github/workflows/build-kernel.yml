@@ -2551,60 +2551,74 @@ jobs:
 
       - name: QEMU AArch64 Automated Boot Test
         run: |
-          echo "=== 1. Installing Clean QEMU Package ==="
+          echo "=== 1. Installing QEMU and AArch64 GCC ==="
           sudo apt-get update
-          sudo apt-get install -y qemu-system-arm cpio
+          sudo apt-get install -y qemu-system-arm gcc-aarch64-linux-gnu cpio gzip
 
           cd "$GITHUB_WORKSPACE/work/dist"
 
-          echo "=== 2. Creating Minimal Embedded Test Ramdisk ==="
-          mkdir -p test_root/bin test_root/proc test_root/sys test_root/dev
-          
-          # Download static busybox binary for aarch64
-          wget -q https://busybox.net/downloads/binaries/1.35.0-aarch64-linux-musl/busybox -O test_root/bin/busybox || true
-          if [ -f test_root/bin/busybox ]; then
-            chmod +x test_root/bin/busybox
-            cat << 'EOF_INIT' > test_root/init
-          #!/bin/busybox sh
-          /bin/busybox mount -t proc proc /proc
-          /bin/busybox mount -t sysfs sysfs /sys
-          /bin/busybox mount -t devtmpfs devtmpfs /dev
-          echo "========================================="
-          echo "✅ ZERO-MOUNT GKI KERNEL BOOT SUCCESSFUL!"
-          echo "========================================="
-          /bin/busybox poweroff -f
-          EOF_INIT
-            chmod +x test_root/init
+          if [ ! -f "Image" ]; then
+            echo "❌ Error: Image not found in work/dist"
+            exit 1
           fi
 
-          (cd test_root && find . | cpio -o -H newc | gzip) > test-ramdisk.cpio.gz
+          echo "=== 2. Creating Standalone Local /init ==="
+          rm -rf test_root test-ramdisk.cpio.gz
+          mkdir -p test_root/bin test_root/proc test_root/sys test_root/dev
 
-          echo "=== 3. Executing Kernel Boot in QEMU ==="
-          timeout 120s qemu-system-aarch64 \
+          # Tiny C program that prints success and turns off QEMU cleanly
+          cat << 'EOF_C' > init.c
+          #include <stdio.h>
+          #include <unistd.h>
+          #include <sys/reboot.h>
+
+          int main() {
+              printf("\n=========================================\n");
+              printf("✅ ZERO-MOUNT GKI KERNEL BOOT SUCCESSFUL!\n");
+              printf("=========================================\n\n");
+              fflush(stdout);
+              sync();
+              reboot(RB_POWER_OFF);
+              return 0;
+          }
+          EOF_C
+
+          # Compile static binary directly for ARM64
+          aarch64-linux-gnu-gcc -static init.c -o test_root/init
+          chmod +x test_root/init
+          rm -f init.c
+
+          # Verify init binary is created
+          ls -la test_root/init
+
+          # Create compressed CPIO ramdisk
+          (cd test_root && find . | cpio -o -H newc | gzip -9) > test-ramdisk.cpio.gz
+
+          echo "=== 3. Booting Kernel in QEMU ==="
+          timeout --preserve-status 60s qemu-system-aarch64 \
             -M virt \
-            -cpu cortex-a57 \
+            -cpu max \
             -smp 2 \
             -m 2048 \
             -kernel Image \
             -initrd test-ramdisk.cpio.gz \
-            -append "console=ttyAMA0 earlycon=pl011,0x09000000 panic=1 oops=panic" \
+            -append "console=ttyAMA0 earlycon=pl011,0x09000000 panic=1 oops=panic init=/init" \
             -nographic \
             -no-reboot > qemu_boot.log 2>&1 || true
 
           echo "=== 4. Boot Output Inspection ==="
-          tail -n 80 qemu_boot.log
+          cat qemu_boot.log
 
-          # Analyze log for any fatal kernel crashes
+          # Verification check
           if grep -E "Kernel panic|Internal error|Oops|Call trace:" qemu_boot.log; then
             echo "❌ CRITICAL: Kernel Panic / Crash detected in Boot Test!"
             exit 1
-          elif grep -q "ZERO-MOUNT GKI KERNEL BOOT SUCCESSFUL" qemu_boot.log || grep -q "Linux version" qemu_boot.log; then
+          elif grep -q "ZERO-MOUNT GKI KERNEL BOOT SUCCESSFUL" qemu_boot.log; then
             echo "🎉 SUCCESS: Kernel initialized and booted cleanly without any panic!"
           else
             echo "⚠️ Warning: Kernel output incomplete or timed out."
             exit 1
           fi
-
       - name: Upload Boot Crash Logs
         if: failure()
         uses: actions/upload-artifact@v4
