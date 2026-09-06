@@ -30,10 +30,9 @@ on:
         required: false
         type: choice
         options:
-          - clang 12
-          - clang 14
           - clang 19
-        default: "clang 12"
+          - clang 14
+        default: "clang 19"
       defconfig_fragment_exclude:
         description: 'Defconfig fragments to exclude'
         required: false
@@ -67,7 +66,7 @@ jobs:
       KERNEL_REPO: ${{ inputs.kernel_repo }}
       KERNEL_BRANCH: ${{ inputs.kernel_branch }}
       KERNEL_COMMIT: ${{ inputs.kernel_commit }}
-      CLANG_ASSET: ${{ fromJSON('{"clang 12":"clang-r416183b-linux-x86.tar.zst","clang 14":"clang-r450784e-linux-x86.tar.zst","clang 19":"clang-r536225-linux-x86.tar.zst"}')[inputs.clang_version || 'clang 12'] }}
+      CLANG_ASSET: ${{ fromJSON('{"clang 14":"clang-r450784e-linux-x86.tar.zst","clang 19":"clang-r536225-linux-x86.tar.zst"}')[inputs.clang_version || 'clang 19'] }}
       DEFCONFIG_FRAGMENT_EXCLUDE: ${{ inputs.defconfig_fragment_exclude }}
       APPEND_BUILD_ENV: ${{ inputs.append_build_env }}
       APPEND_CONFIG: ${{ inputs.append_config }}
@@ -1737,7 +1736,7 @@ jobs:
           }
 
           static ssize_t debug_store(struct kobject *kobj, struct kobj_attribute *attr,
-          			   const char *buf, size_count)
+          			   const char *buf, size_t count)
           {
           	int val;
 
@@ -1838,21 +1837,21 @@ jobs:
           print("Injecting fs/d_path.c...")
           inject("fs/d_path.c", '#include "mount.h"', '#include "mount.h"\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
           hk_dpath = """#ifdef CONFIG_ZEROMOUNT
-          \tif (path->dentry && d_backing_inode(path->dentry)) {
-          \t\tchar *v_path = zeromount_get_static_vpath(d_backing_inode(path->dentry));
-          \t\tif (v_path) {
-          \t\t\tint len = strlen(v_path);
-          \t\t\tif (buflen < len + 1) {
-          \t\t\t\tkfree(v_path);
-          \t\t\t\treturn ERR_PTR(-ENAMETOOLONG);
-          \t\t\t}
-          \t\t\t*--res = '\\0';
-          \t\t\tres -= len;
-          \t\t\tmemcpy(res, v_path, len);
-          \t\t\tkfree(v_path);
-          \t\t\treturn res;
-          \t\t}
-          \t}
+          	if (path->dentry && d_backing_inode(path->dentry)) {
+          		char *v_path = zeromount_get_static_vpath(d_backing_inode(path->dentry));
+          		if (v_path) {
+          			int len = strlen(v_path);
+          			if (buflen < len + 1) {
+          				kfree(v_path);
+          				return ERR_PTR(-ENAMETOOLONG);
+          			}
+          			*--res = '\\0';
+          			res -= len;
+          			memcpy(res, v_path, len);
+          			kfree(v_path);
+          			return res;
+          		}
+          	}
           #endif\n"""
           inject("fs/d_path.c", 'return path->dentry->d_op->d_dname(path->dentry, buf, buflen);', hk_dpath + '\treturn path->dentry->d_op->d_dname(path->dentry, buf, buflen);')
 
@@ -1862,11 +1861,11 @@ jobs:
           
           hk_perm = """
           #ifdef CONFIG_ZEROMOUNT
-          \tif (zeromount_is_injected_file(inode)) {
-          \t\tif (mask & MAY_WRITE) return -EACCES;
-          \t\treturn 0;
-          \t}
-          \tif (S_ISDIR(inode->i_mode) && zeromount_is_traversal_allowed(inode, mask)) return 0;
+          	if (zeromount_is_injected_file(inode)) {
+          		if (mask & MAY_WRITE) return -EACCES;
+          		return 0;
+          	}
+          	if (S_ISDIR(inode->i_mode) && zeromount_is_traversal_allowed(inode, mask)) return 0;
           #endif
           """
           inject("fs/namei.c", 'int generic_permission(struct inode *inode, int mask)\n{\n\tint ret;', 'int generic_permission(struct inode *inode, int mask)\n{\n\tint ret;' + hk_perm)
@@ -1907,8 +1906,8 @@ jobs:
           print("Injecting fs/xattr.c...")
           inject("fs/xattr.c", '#include <linux/uaccess.h>', '#include <linux/uaccess.h>\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
           hk_xa = """#ifdef CONFIG_ZEROMOUNT
-          \tssize_t zm_ret = zeromount_spoof_xattr(dentry, name, value, size);
-          \tif (zm_ret != -EOPNOTSUPP) return zm_ret;
+          	ssize_t zm_ret = zeromount_spoof_xattr(dentry, name, value, size);
+          	if (zm_ret != -EOPNOTSUPP) return zm_ret;
           #endif\n"""
           inject("fs/xattr.c", 'return __vfs_getxattr(dentry, dentry->d_inode, name, value, size, 0);', hk_xa + '\treturn __vfs_getxattr(dentry, dentry->d_inode, name, value, size, 0);')
 
@@ -1947,13 +1946,13 @@ jobs:
           inject("fs/stat.c", 'int vfs_fstat(int fd, struct kstat *stat)', stat_hk + '\nint vfs_fstat(int fd, struct kstat *stat)')
           vfs_hk = """orig_flow:
           #ifdef CONFIG_ZEROMOUNT
-          \tif (fname && !IS_ERR(fname)) {
-          \t\tint zm_ret = zeromount_stat_hook(dfd, fname->name, stat, request_mask, flags);
-          \t\tif (zm_ret != -ENOENT) {
-          \t\t\tputname(fname);
-          \t\t\treturn zm_ret;
-          \t\t}
-          \t}
+          	if (fname && !IS_ERR(fname)) {
+          		int zm_ret = zeromount_stat_hook(dfd, fname->name, stat, request_mask, flags);
+          		if (zm_ret != -ENOENT) {
+          			putname(fname);
+          			return zm_ret;
+          		}
+          	}
           #endif
           """
           inject("fs/stat.c", 'orig_flow:\n\terror = filename_lookup(dfd, fname, lookup_flags, &path, NULL);', vfs_hk + '\terror = filename_lookup(dfd, fname, lookup_flags, &path, NULL);')
