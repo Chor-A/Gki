@@ -2542,34 +2542,50 @@ jobs:
 
       - name: Advanced Cuttlefish Boot Test
         run: |
-          echo "=== 1. Setting up Cuttlefish Environment & Virtualization ==="
+          echo "=== 1. Installing Host Tools, Virtualization & Network Dependencies ==="
           sudo apt-get update
-          sudo apt-get install -y qemu-system-arm libvirt-daemon-system libvirt-clients bridge-utils
+          sudo apt-get install -y \
+            qemu-system-arm \
+            qemu-efi-aarch64 \
+            libvirt-daemon-system \
+            libvirt-clients \
+            bridge-utils \
+            iptables \
+            dnsmasq \
+            adb \
+            net-tools
 
+          echo "=== 2. Installing Google Cuttlefish Host Packages ==="
           mkdir -p cf-debs && cd cf-debs
           CVD_VER="v0.9.36"
-          wget -q "https://github.com/google/android-cuttlefish/releases/download/${CVD_VER}/cuttlefish-base_0.9.36_amd64.deb"
-          wget -q "https://github.com/google/android-cuttlefish/releases/download/${CVD_VER}/cuttlefish-user_0.9.36_amd64.deb"
-          sudo dpkg -i cuttlefish-base_*.deb cuttlefish-user_*.deb || sudo apt-get install -fy
+          wget -q "https://github.com/google/android-cuttlefish/releases/download/${CVD_VER}/cuttlefish-base_0.9.36_amd64.deb" || true
+          wget -q "https://github.com/google/android-cuttlefish/releases/download/${CVD_VER}/cuttlefish-user_0.9.36_amd64.deb" || true
+          
+          # Force install and heal dependencies on Ubuntu 24.04
+          sudo dpkg -i --force-all cuttlefish-base_*.deb cuttlefish-user_*.deb || true
+          sudo apt-get install -fy -y
           cd .. && rm -rf cf-debs
 
+          # Setup CVD Network interfaces & permissions
+          sudo usermod -aG kvm,cvdnetwork $USER || true
           sudo chmod 666 /dev/kvm /dev/vhost-net /dev/vhost-vsock 2>/dev/null || true
-          sudo usermod -aG kvm,cvdnetwork $USER
 
-          echo "=== 2. Downloading Cuttlefish Android 12 Images ==="
+          echo "=== 3. Downloading Cuttlefish Android 12 ARM64 Target ==="
           mkdir -p cf && cd cf
           curl -s -L "https://github.com/google/android-cuttlefish/releases/download/${CVD_VER}/fetch_cvd" -o fetch_cvd
           chmod +x fetch_cvd
 
+          # Fetch official Google AOSP Android 12 GKI ARM64 images
           ./fetch_cvd -branch=aosp-android12-release -target=aosp_cf_arm64_phone-userdebug
 
-          echo "=== 3. Launching Cuttlefish with Newly Built ZeroMount Kernel ==="
+          echo "=== 4. Launching Cuttlefish with Built Kernel ==="
           KERNEL_PATH="$GITHUB_WORKSPACE/work/dist/Image"
           if [ ! -f "$KERNEL_PATH" ]; then
             KERNEL_PATH="$GITHUB_WORKSPACE/work/out/android12-5.10/dist/Image"
           fi
           echo "Testing kernel image: $KERNEL_PATH"
 
+          # Launch Cuttlefish daemon using QEMU CLI
           HOME=$PWD bin/launch_cvd \
             -daemon \
             -vm_manager=qemu_cli \
@@ -2580,36 +2596,38 @@ jobs:
             -start_webrtc=false \
             -run_adb_connector=true &
 
-          echo "=== 4. Monitoring Boot and Crash Logs ==="
+          echo "=== 5. Monitoring Boot Process ==="
           BOOT_TIMEOUT=900
           ELAPSED=0
           BOOT_SUCCESS=0
 
           while [ $ELAPSED -lt $BOOT_TIMEOUT ]; do
+            # Early Panic / Crash Detection
             if [ -f cuttlefish_runtime/kernel.log ]; then
               if grep -E "Kernel panic|Internal error|Oops|Call trace:" cuttlefish_runtime/kernel.log; then
                 echo "❌ CRITICAL: Kernel Panic detected during Cuttlefish boot!"
-                tail -n 100 cuttlefish_runtime/kernel.log
+                tail -n 120 cuttlefish_runtime/kernel.log
                 break
               fi
             fi
 
-            BOOT_COMPLETED=$(bin/adb getprop sys.boot_completed 2>/dev/null || echo "0")
+            # Check via system ADB
+            BOOT_COMPLETED=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "0")
             if [ "$BOOT_COMPLETED" = "1" ]; then
-              echo "🎉 SUCCESS: Cuttlefish fully booted with ZeroMount Kernel!"
+              echo "🎉 SUCCESS: Cuttlefish fully booted into Android OS with ZeroMount Kernel!"
               BOOT_SUCCESS=1
               break
             fi
 
             sleep 15
             ELAPSED=$((ELAPSED + 15))
-            echo "Waiting for Cuttlefish to finish booting... (${ELAPSED}s / ${BOOT_TIMEOUT}s)"
+            echo "Waiting for Android userspace to boot... (${ELAPSED}s / ${BOOT_TIMEOUT}s)"
           done
 
           bin/stop_cvd || true
 
           if [ $BOOT_SUCCESS -ne 1 ]; then
-            echo "❌ Cuttlefish boot verification failed!"
+            echo "❌ Cuttlefish boot verification failed or timed out!"
             exit 1
           fi
 
