@@ -1960,8 +1960,12 @@ jobs:
               with open("fs/readdir.c", "r") as f: c = f.read()
               c = c.replace('#include <linux/unistd.h>', '#include <linux/unistd.h>\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
               
-              # Robust injection of initial_count right after int error; in getdents/getdents64
-              c = re.sub(r'(SYSCALL_DEFINE3\(getdents(?:64)?,[^{]+\{[^}]*?int error;)', r'\1\n#ifdef CONFIG_ZEROMOUNT\n\tint initial_count = count;\n#endif', c)
+              # Simple string replacements to inject variable directly at function starts
+              c = c.replace('SYSCALL_DEFINE3(getdents, unsigned int, fd,\n\t\tstruct linux_dirent __user *, dirent, unsigned int, count)\n{', 
+                            'SYSCALL_DEFINE3(getdents, unsigned int, fd,\n\t\tstruct linux_dirent __user *, dirent, unsigned int, count)\n{\n#ifdef CONFIG_ZEROMOUNT\n\tint initial_count = count;\n#endif\n')
+                            
+              c = c.replace('SYSCALL_DEFINE3(getdents64, unsigned int, fd,\n\t\tstruct linux_dirent64 __user *, dirent, unsigned int, count)\n{', 
+                            'SYSCALL_DEFINE3(getdents64, unsigned int, fd,\n\t\tstruct linux_dirent64 __user *, dirent, unsigned int, count)\n{\n#ifdef CONFIG_ZEROMOUNT\n\tint initial_count = count;\n#endif\n')
               
               skip = """\tif (!f.file)
           		return -EBADF;
