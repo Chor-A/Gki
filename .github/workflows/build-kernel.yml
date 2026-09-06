@@ -1970,7 +1970,6 @@ jobs:
           #endif"""
               c = c.replace('if (!f.file)\n\t\treturn -EBADF;', skip)
               
-              # No new variables. Just call the function and check if it did anything.
               inj_norm = """
           #ifdef CONFIG_ZEROMOUNT
           skip_real_iterate:
@@ -2236,7 +2235,7 @@ jobs:
                   '\tfor (i = 1; i <= policydb->p_types.nprim; i++) {\n'
                   '\t\tconst char *n = sym_name(policydb, SYM_TYPES, i - 1);\n'
                   '\t\tif (!n) continue;\n'
-                  '\t\t\tif (!strcmp(n, "fsck_untrusted")) new_ids->fsck_t = i;\n'
+                  '\t\tif (!strcmp(n, "fsck_untrusted")) new_ids->fsck_t = i;\n'
                   '\t\telse if (!strcmp(n, "shell")) new_ids->shell_t = i;\n'
                   '\t\telse if (!strcmp(n, "su")) new_ids->su_t = i;\n'
                   '\t\telse if (!strcmp(n, "adbd")) new_ids->adbd_t = i;\n'
