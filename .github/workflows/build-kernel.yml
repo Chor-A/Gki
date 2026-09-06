@@ -16,11 +16,11 @@ on:
       kernel_repo:
         description: 'Kernel source repository (full URL)'
         required: false
-        default: "https://github.com/Chor-A/Templar-Kernel-GKI-5.10"
+        default: "https://github.com/Steambot12/Templar-Kernel-GKI-5.10"
       kernel_branch:
         description: 'Kernel source branch'
         required: false
-        default: "Linux7-Staging"
+        default: "Templar-LinuxStable"
       kernel_commit:
         description: 'Kernel source commit'
         required: false
@@ -112,7 +112,7 @@ jobs:
           sudo swapon /swapfile
           free -h
 
-      - name: Clone Kernel & Clean Hardcoded NoMount
+      - name: Clone Kernel Source
         run: |
           mkdir -p work
           git clone -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} work/common
@@ -122,13 +122,7 @@ jobs:
             git checkout ${{ env.KERNEL_COMMIT }}
           fi
 
-          echo "=== Reverting Hardcoded NoMount (Commit 3be84ff) ==="
-          git config --global user.email "Antonio_Nelson@proton.me"
-          git config --global user.name "Chor-A"
-          
-          git revert --no-edit 3be84ff || echo "Warning: Commit 3be84ff not found or already reverted. Proceeding."
-
-      - name: Apply SUSFS, Custom Patches, Manual NoMount & Direct Code Spoofing
+      - name: Apply SUSFS, Custom Patches & Direct Code Spoofing
         run: |
           cd work/common
 
@@ -382,7 +376,7 @@ jobs:
                   '\t\tif (!strcmp(n, "capability")) new_ids->cap_c = i;\n'
                   '\t\telse if (!strcmp(n, "process")) new_ids->process_c = i;\n'
                   '\t\telse if (!strcmp(n, "binder")) new_ids->binder_c = i;\n'
-                  '\t\t}\n\n'
+                  '\t}\n\n'
                   '\tfor (i = 1; i <= policydb->p_types.nprim; i++) {\n'
                   '\t\tconst char *n = sym_name(policydb, SYM_TYPES, i - 1);\n'
                   '\t\tif (!n) continue;\n'
@@ -443,14 +437,6 @@ jobs:
               print("Successfully spoofed security/selinux/ss/services.c")
           EOF
           echo "✅ Python regex injection with UID-checks completed successfully!"
-
-          echo "=== 4. Setting up NoMount (Manual Method) ==="
-          git clone --depth=1 -b dev https://github.com/maxsteeel/nomount.git ../nomount_repo
-          mkdir -p fs/nomount
-          cp -f ../nomount_repo/kernel/src/* fs/nomount/
-          grep -q 'fs/nomount/Kconfig' fs/Kconfig || echo 'source "fs/nomount/Kconfig"' >> fs/Kconfig
-          grep -q 'nomount/' fs/Makefile || echo 'obj-$(CONFIG_NOMOUNT) += nomount/' >> fs/Makefile
-          echo "CONFIG_NOMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
           echo "=== 5. Setting up KernelSU-Next (susfs) via pershoot setup.sh ==="
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
@@ -723,6 +709,6 @@ jobs:
           else
             gh release create "$tag" \
               --title "Templar Kernel GKI $tag" \
-              --notes "Built with pershoot KernelSU-Next (susfs), MGLRU, NoMount & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --notes "Built with pershoot KernelSU-Next (susfs), MGLRU & Full Spoofs. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
