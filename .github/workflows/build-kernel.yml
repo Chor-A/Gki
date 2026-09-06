@@ -1968,6 +1968,8 @@ jobs:
           """
               inj_tail_norm = """
           #ifdef CONFIG_ZEROMOUNT
+          	} else {
+          		error = 0;
           	}
           	if (error == 0 && !signal_pending(current)) {
           		zeromount_inject_dents(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
@@ -1983,6 +1985,8 @@ jobs:
           """
               inj_tail_64 = """
           #ifdef CONFIG_ZEROMOUNT
+          	} else {
+          		error = 0;
           	}
           	if (error == 0 && !signal_pending(current)) {
           		zeromount_inject_dents64(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
