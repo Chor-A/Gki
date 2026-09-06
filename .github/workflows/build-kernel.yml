@@ -30,10 +30,10 @@ on:
         required: false
         type: choice
         options:
-          - clang 12 (Stock GKI)
+          - clang 12
           - clang 14
           - clang 19
-        default: "clang 12 (Stock GKI)"
+        default: "clang 12"
       defconfig_fragment_exclude:
         description: 'Defconfig fragments to exclude'
         required: false
@@ -67,7 +67,7 @@ jobs:
       KERNEL_REPO: ${{ inputs.kernel_repo }}
       KERNEL_BRANCH: ${{ inputs.kernel_branch }}
       KERNEL_COMMIT: ${{ inputs.kernel_commit }}
-      CLANG_ASSET: ${{ fromJSON('{"clang 12 (Stock GKI)":"clang-r416183b-linux-x86.tar.zst","clang 14":"clang-r450784e-linux-x86.tar.zst","clang 19":"clang-r536225-linux-x86.tar.zst"}')[inputs.clang_version] }}
+      CLANG_ASSET: ${{ fromJSON('{"clang 12":"clang-r416183b-linux-x86.tar.zst","clang 14":"clang-r450784e-linux-x86.tar.zst","clang 19":"clang-r536225-linux-x86.tar.zst"}')[inputs.clang_version || 'clang 12'] }}
       DEFCONFIG_FRAGMENT_EXCLUDE: ${{ inputs.defconfig_fragment_exclude }}
       APPEND_BUILD_ENV: ${{ inputs.append_build_env }}
       APPEND_CONFIG: ${{ inputs.append_config }}
@@ -159,7 +159,7 @@ jobs:
           done
           echo "✅ All .patch files applied!"
 
-          echo "=== 3. Injecting ZeroMount Subsystem ==="
+          echo "=== 3. Injecting ZeroMount Subsystem via Python ==="
           cat << 'EOF_ZM_H' > include/linux/zeromount.h
           #ifndef _LINUX_ZEROMOUNT_H
           #define _LINUX_ZEROMOUNT_H
@@ -1737,7 +1737,7 @@ jobs:
           }
 
           static ssize_t debug_store(struct kobject *kobj, struct kobj_attribute *attr,
-          			   const char *buf, size_t count)
+          			   const char *buf, size_count)
           {
           	int val;
 
@@ -1838,21 +1838,21 @@ jobs:
           print("Injecting fs/d_path.c...")
           inject("fs/d_path.c", '#include "mount.h"', '#include "mount.h"\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
           hk_dpath = """#ifdef CONFIG_ZEROMOUNT
-          	if (path->dentry && d_backing_inode(path->dentry)) {
-          		char *v_path = zeromount_get_static_vpath(d_backing_inode(path->dentry));
-          		if (v_path) {
-          			int len = strlen(v_path);
-          			if (buflen < len + 1) {
-          				kfree(v_path);
-          				return ERR_PTR(-ENAMETOOLONG);
-          			}
-          			*--res = '\\0';
-          			res -= len;
-          			memcpy(res, v_path, len);
-          			kfree(v_path);
-          			return res;
-          		}
-          	}
+          \tif (path->dentry && d_backing_inode(path->dentry)) {
+          \t\tchar *v_path = zeromount_get_static_vpath(d_backing_inode(path->dentry));
+          \t\tif (v_path) {
+          \t\t\tint len = strlen(v_path);
+          \t\t\tif (buflen < len + 1) {
+          \t\t\t\tkfree(v_path);
+          \t\t\t\treturn ERR_PTR(-ENAMETOOLONG);
+          \t\t\t}
+          \t\t\t*--res = '\\0';
+          \t\t\tres -= len;
+          \t\t\tmemcpy(res, v_path, len);
+          \t\t\tkfree(v_path);
+          \t\t\treturn res;
+          \t\t}
+          \t}
           #endif\n"""
           inject("fs/d_path.c", 'return path->dentry->d_op->d_dname(path->dentry, buf, buflen);', hk_dpath + '\treturn path->dentry->d_op->d_dname(path->dentry, buf, buflen);')
 
@@ -1862,11 +1862,11 @@ jobs:
           
           hk_perm = """
           #ifdef CONFIG_ZEROMOUNT
-          	if (zeromount_is_injected_file(inode)) {
-          		if (mask & MAY_WRITE) return -EACCES;
-          		return 0;
-          	}
-          	if (S_ISDIR(inode->i_mode) && zeromount_is_traversal_allowed(inode, mask)) return 0;
+          \tif (zeromount_is_injected_file(inode)) {
+          \t\tif (mask & MAY_WRITE) return -EACCES;
+          \t\treturn 0;
+          \t}
+          \tif (S_ISDIR(inode->i_mode) && zeromount_is_traversal_allowed(inode, mask)) return 0;
           #endif
           """
           inject("fs/namei.c", 'int generic_permission(struct inode *inode, int mask)\n{\n\tint ret;', 'int generic_permission(struct inode *inode, int mask)\n{\n\tint ret;' + hk_perm)
@@ -1874,24 +1874,26 @@ jobs:
 
           print("Injecting fs/proc/base.c...")
           inject("fs/proc/base.c", '#include "internal.h"', '#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n#include "internal.h"')
-          hk_base = """#ifdef CONFIG_ZEROMOUNT
-          	if (!zeromount_should_skip() && path->dentry) {
-          		struct inode *inode = d_backing_inode(path->dentry);
-          		if (inode) {
-          			char *vpath = zeromount_get_static_vpath(inode);
-          			if (vpath) {
-				int vlen = strlen(vpath);
-				if (vlen > buflen) vlen = buflen;
-				if (copy_to_user(buffer, vpath, vlen) == 0) {
-					kfree(vpath);
-					free_page((unsigned long)tmp);
-					return vlen;
-				}
-				kfree(vpath);
-			}
-		}
-	}
-#endif\n"""
+          hk_base = (
+              "#ifdef CONFIG_ZEROMOUNT\n"
+              "\tif (!zeromount_should_skip() && path->dentry) {\n"
+              "\t\tstruct inode *inode = d_backing_inode(path->dentry);\n"
+              "\t\tif (inode) {\n"
+              "\t\t\tchar *vpath = zeromount_get_static_vpath(inode);\n"
+              "\t\t\tif (vpath) {\n"
+              "\t\t\t\tint vlen = strlen(vpath);\n"
+              "\t\t\t\tif (vlen > buflen) vlen = buflen;\n"
+              "\t\t\t\tif (copy_to_user(buffer, vpath, vlen) == 0) {\n"
+              "\t\t\t\t\tkfree(vpath);\n"
+              "\t\t\t\t\tfree_page((unsigned long)tmp);\n"
+              "\t\t\t\t\treturn vlen;\n"
+              "\t\t\t\t}\n"
+              "\t\t\t\tkfree(vpath);\n"
+              "\t\t\t}\n"
+              "\t\t}\n"
+              "\t}\n"
+              "#endif\n"
+          )
           inject("fs/proc/base.c", 'if (!tmp)\n\t\treturn -ENOMEM;', 'if (!tmp)\n\t\treturn -ENOMEM;\n' + hk_base)
 
           print("Injecting fs/proc/task_mmu.c...")
@@ -1905,8 +1907,8 @@ jobs:
           print("Injecting fs/xattr.c...")
           inject("fs/xattr.c", '#include <linux/uaccess.h>', '#include <linux/uaccess.h>\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
           hk_xa = """#ifdef CONFIG_ZEROMOUNT
-          	ssize_t zm_ret = zeromount_spoof_xattr(dentry, name, value, size);
-          	if (zm_ret != -EOPNOTSUPP) return zm_ret;
+          \tssize_t zm_ret = zeromount_spoof_xattr(dentry, name, value, size);
+          \tif (zm_ret != -EOPNOTSUPP) return zm_ret;
           #endif\n"""
           inject("fs/xattr.c", 'return __vfs_getxattr(dentry, dentry->d_inode, name, value, size, 0);', hk_xa + '\treturn __vfs_getxattr(dentry, dentry->d_inode, name, value, size, 0);')
 
@@ -1945,13 +1947,13 @@ jobs:
           inject("fs/stat.c", 'int vfs_fstat(int fd, struct kstat *stat)', stat_hk + '\nint vfs_fstat(int fd, struct kstat *stat)')
           vfs_hk = """orig_flow:
           #ifdef CONFIG_ZEROMOUNT
-          	if (fname && !IS_ERR(fname)) {
-          		int zm_ret = zeromount_stat_hook(dfd, fname->name, stat, request_mask, flags);
-          		if (zm_ret != -ENOENT) {
-          			putname(fname);
-          			return zm_ret;
-          		}
-          	}
+          \tif (fname && !IS_ERR(fname)) {
+          \t\tint zm_ret = zeromount_stat_hook(dfd, fname->name, stat, request_mask, flags);
+          \t\tif (zm_ret != -ENOENT) {
+          \t\t\tputname(fname);
+          \t\t\treturn zm_ret;
+          \t\t}
+          \t}
           #endif
           """
           inject("fs/stat.c", 'orig_flow:\n\terror = filename_lookup(dfd, fname, lookup_flags, &path, NULL);', vfs_hk + '\terror = filename_lookup(dfd, fname, lookup_flags, &path, NULL);')
@@ -1961,39 +1963,39 @@ jobs:
               with open("fs/readdir.c", "r") as f: c = f.read()
               c = c.replace('#include <linux/unistd.h>', '#include <linux/unistd.h>\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
               
-              inj_body_norm = """
-          #ifdef CONFIG_ZEROMOUNT
-          	if (f.file->f_pos < ZEROMOUNT_MAGIC_POS) {
-          #endif
-          """
-              inj_tail_norm = """
-          #ifdef CONFIG_ZEROMOUNT
-          	} else {
-          		error = 0;
-          	}
-          	if (error == 0 && !signal_pending(current)) {
-          		zeromount_inject_dents(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
-          	}
-          #endif
-          	fdput_pos(f);
-          """
+              inj_body_norm = (
+                  "#ifdef CONFIG_ZEROMOUNT\n"
+                  "\tif (f.file->f_pos < ZEROMOUNT_MAGIC_POS) {\n"
+                  "#endif\n"
+              )
+              inj_tail_norm = (
+                  "#ifdef CONFIG_ZEROMOUNT\n"
+                  "\t} else {\n"
+                  "\t\terror = 0;\n"
+                  "\t}\n"
+                  "\tif (error == 0 && !signal_pending(current)) {\n"
+                  "\t\tzeromount_inject_dents(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);\n"
+                  "\t}\n"
+                  "#endif\n"
+                  "\tfdput_pos(f);\n"
+              )
               
-              inj_body_64 = """
-          #ifdef CONFIG_ZEROMOUNT
-          	if (f.file->f_pos < ZEROMOUNT_MAGIC_POS) {
-          #endif
-          """
-              inj_tail_64 = """
-          #ifdef CONFIG_ZEROMOUNT
-          	} else {
-          		error = 0;
-          	}
-          	if (error == 0 && !signal_pending(current)) {
-          		zeromount_inject_dents64(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
-          	}
-          #endif
-          	fdput_pos(f);
-          """
+              inj_body_64 = (
+                  "#ifdef CONFIG_ZEROMOUNT\n"
+                  "\tif (f.file->f_pos < ZEROMOUNT_MAGIC_POS) {\n"
+                  "#endif\n"
+              )
+              inj_tail_64 = (
+                  "#ifdef CONFIG_ZEROMOUNT\n"
+                  "\t} else {\n"
+                  "\t\terror = 0;\n"
+                  "\t}\n"
+                  "\tif (error == 0 && !signal_pending(current)) {\n"
+                  "\t\tzeromount_inject_dents64(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);\n"
+                  "\t}\n"
+                  "#endif\n"
+                  "\tfdput_pos(f);\n"
+              )
               
               def inject_wrapper(source, sig_pattern, body, tail):
                   match = re.search(sig_pattern, source)
@@ -2005,10 +2007,8 @@ jobs:
                       
                       if err_idx != -1:
                           source = source[:err_idx] + body + source[err_idx:]
-                          
                           fdput_idx = source.find('\tfdput_pos(f);', err_idx + len(body))
                           if fdput_idx != -1:
-                              # Replaced 13 with 14 to properly cover '\tfdput_pos(f);' and not leave dangling ';'
                               return source[:fdput_idx] + tail + source[fdput_idx + 14:]
                   return source
 
@@ -2538,7 +2538,6 @@ jobs:
 
       - name: Build kernel
         run: |
-          # Removed the forced sed override for clang-r536225 so that it adheres to your working build.config toolchain
           chmod +x ./build-kernel.sh
           ./build-kernel.sh ${{ inputs.ccache && '--ccache' || '' }}
 
@@ -2661,4 +2660,3 @@ jobs:
               --notes "Built with pershoot KernelSU-Next (susfs), MGLRU, ZeroMount & Full Spoofs. Tested with Cuttlefish. $(date -u '+%Y-%m-%d %H:%M UTC')" \
               "${assets[@]}"
           fi
-          
