@@ -158,7 +158,7 @@ jobs:
           done
           echo "✅ All .patch files applied!"
 
-          echo "=== 3. Injecting ZeroMount Subsystem via Python (Bulletproof) ==="
+          echo "=== 3. Injecting ZeroMount Subsystem via Python ==="
           cat << 'EOF_ZM_H' > include/linux/zeromount.h
           #ifndef _LINUX_ZEROMOUNT_H
           #define _LINUX_ZEROMOUNT_H
@@ -1970,14 +1970,12 @@ jobs:
           #endif"""
               c = c.replace('if (!f.file)\n\t\treturn -EBADF;', skip)
               
-              # Notice the "int initial_count = count;" is completely safe inside this block!
+              # No new variables. Just call the function and check if it did anything.
               inj_norm = """
           #ifdef CONFIG_ZEROMOUNT
           skip_real_iterate:
-          	if (error >= 0 && !signal_pending(current)) {
-          		int initial_count = count;
+          	if (error == 0 && !signal_pending(current)) {
           		zeromount_inject_dents(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
-          		if (count != initial_count) error = (error == 0) ? (initial_count - count) : (error + initial_count - count);
           	}
           #endif
           	fdput_pos(f);"""
@@ -1985,10 +1983,8 @@ jobs:
               inj_64 = """
           #ifdef CONFIG_ZEROMOUNT
           skip_real_iterate:
-          	if (error >= 0 && !signal_pending(current)) {
-          		int initial_count = count;
+          	if (error == 0 && !signal_pending(current)) {
           		zeromount_inject_dents64(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
-          		if (count != initial_count) error = (error == 0) ? (initial_count - count) : (error + initial_count - count);
           	}
           #endif
           	fdput_pos(f);"""
@@ -2240,7 +2236,7 @@ jobs:
                   '\tfor (i = 1; i <= policydb->p_types.nprim; i++) {\n'
                   '\t\tconst char *n = sym_name(policydb, SYM_TYPES, i - 1);\n'
                   '\t\tif (!n) continue;\n'
-                  '\t\tif (!strcmp(n, "fsck_untrusted")) new_ids->fsck_t = i;\n'
+                  '\t\t\tif (!strcmp(n, "fsck_untrusted")) new_ids->fsck_t = i;\n'
                   '\t\telse if (!strcmp(n, "shell")) new_ids->shell_t = i;\n'
                   '\t\telse if (!strcmp(n, "su")) new_ids->su_t = i;\n'
                   '\t\telse if (!strcmp(n, "adbd")) new_ids->adbd_t = i;\n'
