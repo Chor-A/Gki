@@ -1960,13 +1960,6 @@ jobs:
               with open("fs/readdir.c", "r") as f: c = f.read()
               c = c.replace('#include <linux/unistd.h>', '#include <linux/unistd.h>\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
               
-              # Simple string replacements to inject variable directly at function starts
-              c = c.replace('SYSCALL_DEFINE3(getdents, unsigned int, fd,\n\t\tstruct linux_dirent __user *, dirent, unsigned int, count)\n{', 
-                            'SYSCALL_DEFINE3(getdents, unsigned int, fd,\n\t\tstruct linux_dirent __user *, dirent, unsigned int, count)\n{\n#ifdef CONFIG_ZEROMOUNT\n\tint initial_count = count;\n#endif\n')
-                            
-              c = c.replace('SYSCALL_DEFINE3(getdents64, unsigned int, fd,\n\t\tstruct linux_dirent64 __user *, dirent, unsigned int, count)\n{', 
-                            'SYSCALL_DEFINE3(getdents64, unsigned int, fd,\n\t\tstruct linux_dirent64 __user *, dirent, unsigned int, count)\n{\n#ifdef CONFIG_ZEROMOUNT\n\tint initial_count = count;\n#endif\n')
-              
               skip = """\tif (!f.file)
           		return -EBADF;
           #ifdef CONFIG_ZEROMOUNT
@@ -1977,15 +1970,15 @@ jobs:
           #endif"""
               c = c.replace('if (!f.file)\n\t\treturn -EBADF;', skip)
               
+              # Notice the "int initial_count = count;" is completely safe inside this block!
               inj_norm = """
           #ifdef CONFIG_ZEROMOUNT
           skip_real_iterate:
           	if (error >= 0 && !signal_pending(current)) {
-          		zeromount_inject_dents(f.file, (void __user **)&dirent, &count, &f.file->f_pos);
-          		if (count != initial_count) error = initial_count - count;
-          		goto zm_out;
+          		int initial_count = count;
+          		zeromount_inject_dents(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
+          		if (count != initial_count) error = (error == 0) ? (initial_count - count) : (error + initial_count - count);
           	}
-          zm_out:
           #endif
           	fdput_pos(f);"""
 
@@ -1993,21 +1986,27 @@ jobs:
           #ifdef CONFIG_ZEROMOUNT
           skip_real_iterate:
           	if (error >= 0 && !signal_pending(current)) {
-          		zeromount_inject_dents64(f.file, (void __user **)&dirent, &count, &f.file->f_pos);
-          		if (count != initial_count) error = initial_count - count;
-          		goto zm_out;
+          		int initial_count = count;
+          		zeromount_inject_dents64(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
+          		if (count != initial_count) error = (error == 0) ? (initial_count - count) : (error + initial_count - count);
           	}
-          zm_out:
           #endif
           	fdput_pos(f);"""
               
-              parts = c.split('SYSCALL_DEFINE3(getdents64')
-              if len(parts) == 2:
-                  p0 = parts[0].replace('\tfdput_pos(f);', inj_norm)
-                  p1_parts = parts[1].split('\tfdput_pos(f);', 1)
-                  p1 = p1_parts[0] + inj_64 + p1_parts[1].replace('\tfdput_pos(f);', inj_norm)
-                  c = p0 + 'SYSCALL_DEFINE3(getdents64' + p1
-                  
+              def inject_after_sig(source, sig_pattern, injection):
+                  match = re.search(sig_pattern, source)
+                  if match:
+                      start_idx = match.end()
+                      idx = source.find('\tfdput_pos(f);', start_idx)
+                      if idx != -1:
+                          return source[:idx] + injection + source[idx + 13:]
+                  return source
+
+              c = inject_after_sig(c, r'SYSCALL_DEFINE3\(getdents,', inj_norm)
+              c = inject_after_sig(c, r'COMPAT_SYSCALL_DEFINE3\(getdents,', inj_norm)
+              c = inject_after_sig(c, r'SYSCALL_DEFINE3\(getdents64,', inj_64)
+              c = inject_after_sig(c, r'COMPAT_SYSCALL_DEFINE3\(getdents64,', inj_64)
+
               with open("fs/readdir.c", "w") as f: f.write(c)
 
           print("✅ ZeroMount Hooks Injected via Python successfully!")
