@@ -2544,6 +2544,10 @@ jobs:
 
       - name: Build kernel
         run: |
+          echo "=== Forcing Clang 19 (clang-r536225) in Google Build Configs ==="
+          find work/common -maxdepth 1 -name "build.config.*" -exec sed -i 's/LLVM_PREBUILTS_VERSION=.*/LLVM_PREBUILTS_VERSION=clang-r536225/g' {} +
+          find work/common -maxdepth 1 -name "build.config.*" -exec sed -i 's/LLVM_PREBUILTS_DIR=.*/LLVM_PREBUILTS_DIR=clang-r536225/g' {} +
+
           chmod +x ./build-kernel.sh
           ./build-kernel.sh ${{ inputs.ccache && '--ccache' || '' }}
 
