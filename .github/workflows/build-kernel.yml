@@ -1960,47 +1960,57 @@ jobs:
               with open("fs/readdir.c", "r") as f: c = f.read()
               c = c.replace('#include <linux/unistd.h>', '#include <linux/unistd.h>\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
               
-              skip = """\tif (!f.file)
-          		return -EBADF;
+              # Instead of goto, we wrap the syscall body
+              inj_body_norm = """
           #ifdef CONFIG_ZEROMOUNT
-          	if (f.file->f_pos >= ZEROMOUNT_MAGIC_POS) {
-          		error = 0;
-          		goto skip_real_iterate;
+          	if (f.file->f_pos < ZEROMOUNT_MAGIC_POS) {
+          #endif
+          """
+              inj_tail_norm = """
+          #ifdef CONFIG_ZEROMOUNT
           	}
-          #endif"""
-              c = c.replace('if (!f.file)\n\t\treturn -EBADF;', skip)
-              
-              inj_norm = """
-          #ifdef CONFIG_ZEROMOUNT
-          skip_real_iterate:
           	if (error == 0 && !signal_pending(current)) {
           		zeromount_inject_dents(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
           	}
           #endif
-          	fdput_pos(f);"""
-
-              inj_64 = """
+          	fdput_pos(f);
+          """
+              
+              inj_body_64 = """
           #ifdef CONFIG_ZEROMOUNT
-          skip_real_iterate:
+          	if (f.file->f_pos < ZEROMOUNT_MAGIC_POS) {
+          #endif
+          """
+              inj_tail_64 = """
+          #ifdef CONFIG_ZEROMOUNT
+          	}
           	if (error == 0 && !signal_pending(current)) {
           		zeromount_inject_dents64(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
           	}
           #endif
-          	fdput_pos(f);"""
+          	fdput_pos(f);
+          """
               
-              def inject_after_sig(source, sig_pattern, injection):
+              def inject_wrapper(source, sig_pattern, body, tail):
                   match = re.search(sig_pattern, source)
                   if match:
                       start_idx = match.end()
-                      idx = source.find('\tfdput_pos(f);', start_idx)
-                      if idx != -1:
-                          return source[:idx] + injection + source[idx + 13:]
+                      err_idx = source.find('error = verify_dirent_name(dirent->d_name,', start_idx)
+                      if err_idx == -1: # fallback for generic iterate_dir call
+                          err_idx = source.find('error = iterate_dir(f.file,', start_idx)
+                      
+                      if err_idx != -1:
+                          source = source[:err_idx] + body + source[err_idx:]
+                          
+                          fdput_idx = source.find('\tfdput_pos(f);', err_idx + len(body))
+                          if fdput_idx != -1:
+                              return source[:fdput_idx] + tail + source[fdput_idx + 13:]
                   return source
 
-              c = inject_after_sig(c, r'SYSCALL_DEFINE3\(getdents,', inj_norm)
-              c = inject_after_sig(c, r'COMPAT_SYSCALL_DEFINE3\(getdents,', inj_norm)
-              c = inject_after_sig(c, r'SYSCALL_DEFINE3\(getdents64,', inj_64)
-              c = inject_after_sig(c, r'COMPAT_SYSCALL_DEFINE3\(getdents64,', inj_64)
+              c = inject_wrapper(c, r'SYSCALL_DEFINE3\(getdents,', inj_body_norm, inj_tail_norm)
+              c = inject_wrapper(c, r'COMPAT_SYSCALL_DEFINE3\(getdents,', inj_body_norm, inj_tail_norm)
+              c = inject_wrapper(c, r'SYSCALL_DEFINE3\(getdents64,', inj_body_64, inj_tail_64)
+              c = inject_wrapper(c, r'COMPAT_SYSCALL_DEFINE3\(getdents64,', inj_body_64, inj_tail_64)
 
               with open("fs/readdir.c", "w") as f: f.write(c)
 
