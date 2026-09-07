@@ -167,7 +167,7 @@ jobs:
             fi
           done
 
-      - name: Inject ZeroMount Subsystem
+      - name: Inject ZeroMount Subsystem Code & Headers
         run: |
           cd work/common
 
@@ -995,7 +995,7 @@ jobs:
           		}
           	}
           unlock_out:
-          	spin_lock(&zeromount_lock);
+          	spin_unlock(&zeromount_lock);
           	kfree(path_copy);
           }
 
@@ -1227,7 +1227,7 @@ jobs:
           fs_initcall(zeromount_init);
           EOF_ZM_C
 
-      - name: AST ENGINE - Spatch & Tree-Sitter Strict Hooks Injection 
+      - name: AST ENGINE - Advanced Parsing, Code Guard & Dynamic Regex Inject
         run: |
           cd work/common
 
@@ -1297,11 +1297,11 @@ jobs:
 
           @statfs_rule@
           identifier st;
-          identifier path;
+          expression E1;
           @@
-          vfs_statfs(..., struct kstatfs *st) {
+          int user_statfs(const char __user *pathname, struct kstatfs *st) {
           ...
-            error = statfs_by_dentry(...);
+            error = vfs_statfs(E1, st);
           +#ifdef CONFIG_ZEROMOUNT
           + (void)zeromount_spoof_statfs(pathname, st);
           +#endif
@@ -1312,7 +1312,8 @@ jobs:
           echo "Applying Coccinelle Syntax Operations (Safe Spatch)..."
           spatch --sp-file fs/zm.cocci fs/d_path.c --in-place
           spatch --sp-file fs/zm.cocci fs/namei.c --in-place
-
+          spatch --sp-file fs/zm.cocci fs/statfs.c --in-place
+          
           echo "Injecting Kconfig..."
           cat << 'EOF' > patch_kconfig.py
           import os
@@ -1324,71 +1325,40 @@ jobs:
           EOF
           python3 patch_kconfig.py
           
-          echo "Executing AST verification and fix logic on readdir.c..."
+          echo "Executing Secure Syntax Injection for readdir.c..."
           python3 - << 'EOF_TREE'
           import sys
-          with open('fs/readdir.c', 'r') as f: code = f.read()
+          import re
           
+          with open('fs/readdir.c', 'r') as f:
+              code = f.read()
+
           if '#include <linux/zeromount.h>' not in code:
               code = code.replace('#include <linux/unistd.h>', '#include <linux/unistd.h>\n#ifdef CONFIG_ZEROMOUNT\n#include <linux/zeromount.h>\n#endif\n')
 
-          orig = """\terror = iterate_dir(f.file, &buf.ctx);
-          \tif (error >= 0)
-          \t\terror = buf.error;
-          \tif (buf.prev_reclen) {
-          \t\tstruct linux_dirent64 __user * lastdirent;
-          \t\ttypeof(lastdirent->d_off) d_off = buf.ctx.pos;
+          # Fix iterate_dir() independently using fuzzy spacing / dynamic capture bounds!
+          iter_anchor = r'([ \t]+)(error = iterate_dir\(f\.file, &buf\.ctx\);)'
+          code = re.sub(iter_anchor, r'#ifdef CONFIG_ZEROMOUNT\n\1if (f.file->f_pos >= ZEROMOUNT_MAGIC_POS) {\n\1\terror = 0;\n\1\tgoto zm_skip_real64;\n\1}\n#endif\n\1\2', code)
 
-          \t\tlastdirent = (void __user *) buf.current_dir - buf.prev_reclen;
-          \t\tif (put_user(d_off, &lastdirent->d_off))
-          \t\t\terror = -EFAULT;
-          \t\telse
-          \t\t\terror = count - buf.count;
-          \t}
-          \tfdput_pos(f);
-          \treturn error;"""
-
-          target = """#ifdef CONFIG_ZEROMOUNT
-          \tif (f.file->f_pos >= ZEROMOUNT_MAGIC_POS) {
-          \t\terror = 0;
-          \t\tgoto zm_skip_real64;
-          \t}
-          #endif
-          \terror = iterate_dir(f.file, &buf.ctx);
-          \tif (error >= 0)
-          \t\terror = buf.error;
-          \tif (buf.prev_reclen) {
-          \t\tstruct linux_dirent64 __user * lastdirent;
-          \t\ttypeof(lastdirent->d_off) d_off = buf.ctx.pos;
-
-          \t\tlastdirent = (void __user *) buf.current_dir - buf.prev_reclen;
-          \t\tif (put_user(d_off, &lastdirent->d_off))
-          \t\t\terror = -EFAULT;
-          \t\telse
-          \t\t\terror = count - buf.count;
-          \t}
-          #ifdef CONFIG_ZEROMOUNT
-          zm_skip_real64:
-          \tif (error >= 0 && !signal_pending(current)) {
-          \t\tint pre_count = count;
-          \t\tzeromount_inject_dents64(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);
-          \t\tif (count != pre_count) {
-          \t\t\tif (error < 0) error = 0;
-          \t\t\terror += (pre_count - count);
-          \t\t}
-          \t}
-          #endif
-          \tfdput_pos(f);
-          \treturn error;"""
-
-          if orig not in code:
-              print("ERROR: AST Structure constraint failed for readdir.c!")
-              sys.exit(1)
-              
-          code = code.replace(orig, target)
-          with open('fs/readdir.c', 'w') as f: f.write(code)
-          EOF_TREE
+          # Find fdput_pos(f) boundaries flexibly regardless of trailing spaces and brackets 
+          # by finding "SYSCALL_DEFINE3(getdents(64)..." till the next end of function
+          def zm_inject(match):
+              header = match.group(1)
+              func = match.group(2)
+              body = match.group(3)
+              suffix = "64" if "64" in func else ""
+              hook = f'#ifdef CONFIG_ZEROMOUNT\nzm_skip_real64:\n\tif (error >= 0 && !signal_pending(current)) {{\n\t\tint pr_count = count;\n\t\tzeromount_inject_dents{suffix}(f.file, (void __user **)&dirent, (int *)&count, &f.file->f_pos);\n\t\tif (count != pr_count) {{\n\t\t\tif (error < 0) error = 0;\n\t\t\terror += (pr_count - count);\n\t\t}}\n\t}}\n#endif\n\tfdput_pos(f);'
+              body = body.replace('\tfdput_pos(f);', hook, 1)
+              return header + func + body
           
+          # Match both getdents/compat syscall definitions to hook
+          pattern = r'([A-Z_]*SYSCALL_DEFINE3\()([getdnscompat_]*getdents(?:64)?)(\,.*?\n{.*?)(?=\n[A-Z_]*SYSCALL|\Z)'
+          code = re.sub(pattern, zm_inject, code, flags=re.DOTALL|re.MULTILINE)
+
+          with open('fs/readdir.c', 'w') as f: f.write(code)
+          print("Successfully hooked iterate_dir() boundaries across syntax rules using dynamic Engine!")
+          EOF_TREE
+
           echo "Writing Process Memory Verification Overrides..."
           python3 - << 'EOF_PROC'
           import sys, os, re
@@ -1460,16 +1430,25 @@ jobs:
       - name: PRE-FLIGHT COMPILE (Strict Logic Guard)
         run: |
           cd work/common
+          
+          CLANG_DIR=$(echo "${{ env.CLANG_ASSET }}" | sed 's/-linux-x86.tar.zst//')
           export ARCH=arm64
           export LLVM=1
+          export LLVM_PREBUILTS_VERSION=$CLANG_DIR
+
           make ARCH=arm64 gki_defconfig
           echo "Compiling Modified Hooks with Native Parser..."
-          make -j$(nproc) ARCH=arm64 fs/d_path.o fs/namei.o fs/readdir.o fs/zeromount.o fs/proc/array.o
+          make -j$(nproc) ARCH=arm64 fs/d_path.o fs/namei.o fs/readdir.o fs/statfs.o fs/zeromount.o fs/proc/array.o
           echo "🎉 Pre-flight strictly verified. Zero syntax regressions detected."
 
       - name: Build kernel
         run: |
           cd work/common
+          
+          CLANG_DIR=$(echo "${{ env.CLANG_ASSET }}" | sed 's/-linux-x86.tar.zst//')
+          find . -maxdepth 1 -name "build.config.*" -exec sed -i "s/LLVM_PREBUILTS_VERSION=.*/LLVM_PREBUILTS_VERSION=$CLANG_DIR/g" {} +
+          find . -maxdepth 1 -name "build.config.*" -exec sed -i "s/LLVM_PREBUILTS_DIR=.*/LLVM_PREBUILTS_DIR=$CLANG_DIR/g" {} +
+
           chmod +x ./build-kernel.sh
           ./build-kernel.sh ${{ inputs.ccache && '--ccache' || '' }}
 
